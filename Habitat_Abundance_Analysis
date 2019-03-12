@@ -1,0 +1,353 @@
+###################################################################
+#Title: Habitat Filling Code
+#Purpose: Calculate filling metrics + relation to habitat temps
+#Created by: L Pandori
+#Created: 8/29/18
+#Last edited: 3/12/19
+##################################################################
+
+##### Prep data + space #####
+# Clear workspace
+rm(lists=ls())
+
+# load libraries
+library(readr)
+library(plyr)
+library(tidyr)
+library(beyonce)
+
+# load in dataset
+  fill<-read_csv("C:/Users/McQuinn/Box Sync/OCEANS Project/OCEANS_RStudio (1)/Final_Data_10.23.17/OCEANS_Filling_R_11.16.17.csv")
+
+  # laptop
+  #fill<-read_csv("C:/Users/Lauren Pandori/Box Sync/OCEANS Project/OCEANS_RStudio (1)/Final_Data_10.23.17/OCEANS_Filling_R_11.16.17.csv")
+
+# QC dataset
+  # delete extra column (x20)
+  fill$X20<-NULL
+  # delete incomplete things (NA's)
+  fill2<-na.omit(fill)
+  # check to see all is there
+  unique(fill2$site)
+  unique(fill2$month)
+  unique(fill2$tideht)
+  # final check
+  View(fill2)
+  
+  # !!! add sum column for ssol + sagg -- this is sheltered !!! #
+  fill2$sp.sh<-fill2$sp.ssol + fill2$sp.sagg
+  fill2$m.j.sh<-fill2$m.j.ssol + fill2$m.j.sagg
+  fill2$m.a.sh<-fill2$m.a.ssol + fill2$m.a.sagg
+  
+  # remove ssol + sagg columns
+  fill2[,c(7:8, 12:13, 17:18)]<-NULL
+
+  # re-name other columns for easier comparisons
+  colnames(fill2)<-c('site', 'month', 'tideht', 'quadrat', 
+                    'sp.sol', 'sp.agg', 'sp.tide', 
+                    'j.sol', 'j.agg', 'j.tide',
+                    'a.sol', 'a.agg', 'a.tide',
+                    'sp.sh', 'j.sh', 'a.sh')
+  
+##### Convert from counts to proportions (for mussels + space -- used to calculate SPD)
+  # Raw data are counts (for # mussels) and % cover (for available habitats), calculate proportions instead
+  
+  # Convert proportions of habitat first
+    # make empty data frame with count data
+    prop<-fill2[,c(1:4, 8:13, 15:16)]
+    
+    # calculate row totals for space, juveniles + adults
+    # sum of space
+    fill2$sp.total = fill2$sp.sol + fill2$sp.agg + fill2$sp.sh +  fill2$sp.tide
+    
+    # sum of juveniles
+    fill2$j.total = fill2$j.sol + fill2$j.agg + fill2$j.sh + fill2$j.tide
+    
+    # sum of adults
+    fill2$a.total = fill2$a.sol + fill2$a.agg + fill2$a.sh + fill2$a.tide
+    
+    # calculate proportion of space + J + A mussels (for SPD calculations)
+      # proportion of space
+      prop$sp.sol = fill2$sp.sol/fill2$sp.total
+      prop$sp.agg = fill2$sp.agg/fill2$sp.total
+      prop$sp.sh = fill2$sp.sh/fill2$sp.total
+      prop$sp.tide = fill2$sp.tide/fill2$sp.total
+      
+      # proportion of juveniles
+      prop$j.sol.p = fill2$j.sol/fill2$j.total
+      prop$j.agg.p = fill2$j.agg/fill2$j.total
+      prop$j.sh.p = fill2$j.sh/fill2$j.total
+      prop$j.tide.p = fill2$j.tide/fill2$j.total
+      
+      # proportion of adults
+      prop$a.sol.p = fill2$a.sol/fill2$a.total
+      prop$a.agg.p = fill2$a.agg/fill2$a.total
+      prop$a.sh.p = fill2$a.sh/fill2$a.total
+      prop$a.tide.p = fill2$a.tide/fill2$a.total
+      
+      head(prop)
+  
+  # Convert from wide to long format
+      # dataframe name, tell it what the new columns names are (column, SampleName), then say what columns you are gathering (X1:X12), and that you want the data to be a factor.
+      
+      prop2<-gather(prop, place, prop, j.sol:a.tide.p, factor_key=TRUE)
+      unique(prop2$place)
+      prop2$type<-NA
+      prop2$place<-as.character(prop2$place)
+      
+      # use if-else to name a the "type" column -- allows for separation of space vs juvenile vs adult metrics
+      
+      for (i in 1:length(prop2$place))
+        {
+          if(startsWith(prop2$place[i], 'j'))
+          {prop2$type[i]<- 'juvenile'
+          }else if (startsWith(prop2$place[i], 'a'))
+          {prop2$type[i] <- 'adult'
+          }else
+          {prop2$type[i] <- 'space'}
+      }
+
+  
+    # create summary dataset (by site*tideht) for plotting
+      prop.summary<-ddply(prop2, c('site', 'tideht', 'place'), summarize, 
+                      avg = mean(prop, na.rm = TRUE),
+                      N = length(na.omit(prop)),
+                      se = sd(prop, na.rm = TRUE)/(N^(1/2)))
+      
+      # export as CSV for plotting in excel
+      write.csv(prop.summary, 'habitat_panelfig_summary_2_4_19.csv')
+
+##### Calculate SPD + create summary data frame ##### 
+    # juvenile + adults - habitat
+    spd<-prop
+      
+    spd$dif.j.sol<-(spd$j.sol.p - spd$sp.sol)/(spd$j.sol.p + spd$sp.sol)
+    spd$dif.j.agg<-(spd$j.agg.p - spd$sp.agg)/(spd$j.agg.p + spd$sp.agg)
+    spd$dif.j.sh<-(spd$j.sh.p - spd$sp.sh)/(spd$j.sh.p + spd$sp.sh)
+    spd$dif.j.tide<-(spd$j.tide.p - spd$sp.tide)/(spd$j.tide.p + spd$sp.tide)
+    
+    spd$dif.a.sol<-(spd$a.sol.p - spd$sp.sol)/(spd$a.sol.p + spd$sp.sol)
+    spd$dif.a.agg<-(spd$a.agg.p - spd$sp.agg)/(spd$a.agg.p + spd$sp.agg)
+    spd$dif.a.sh<-(spd$a.sh.p - spd$sp.sh)/(spd$a.sh.p + spd$sp.sh)
+    spd$dif.a.tide<-(spd$a.tide.p - spd$sp.tide)/(spd$a.tide.p + spd$sp.tide)
+    
+      View(spd)
+      # get rid of extra columns
+      spd$sp.sol<-NULL
+      spd$sp.agg<-NULL
+      spd$sp.sh<-NULL
+      spd$sp.tide<-NULL
+      spd$a.sol.p<-NULL
+      spd$a.agg.p<-NULL
+      spd$a.sh.p<-NULL
+      spd$a.tide.p<-NULL
+      spd$j.tide.p<-NULL
+      spd$j.sol.p<-NULL
+      spd$j.agg.p<-NULL
+      spd$j.sh.p<-NULL
+      
+      # double check all columns gone 
+      head(spd)
+      
+      # convert from wide to long format
+      spd2<-gather(spd, place, spd, j.sol:dif.a.tide, factor_key=TRUE)
+      head(spd2)
+      
+      # calculate summary stats (for counts + space proportions) to plot
+        # subset count data only
+        count.data<-prop[,1:16]
+        
+        count.data<-gather(count.data, place, count, j.sol:sp.tide, factor_key = TRUE)
+        
+        head(count.data)
+        
+        count.summary<-ddply(count.data, c('site', 'tideht', 'place'), summarize, 
+                          avg = mean(count, na.rm = TRUE),
+                          sd = sd(count, na.rm = TRUE),
+                          N = length(na.omit(count)))
+      
+      # export as csv to plot
+      write.csv(count.summary, 'bothsites_count_1_30_19.csv')
+      
+# test if SPD =/= 0 by doing 1-sided t tests
+      head(spd2)
+      
+    # create names column w/ unique concatenated identifiers
+      spd2$names<-paste(spd2$site, spd2$tideht, spd2$place)
+    
+    # create list of names over which to loop
+      name.list<-unique(spd2$names)
+      
+    # create output dataframe
+      spd.result<-matrix(NA, nrow = 96, ncol = 5)
+      spd.result<-as.data.frame(spd.result)
+      colnames(spd.result)<-c('mean', 'N', 'SE', 'Fa', 'P')
+      row.names(spd.result)<-name.list
+    
+      # qc output
+        head(spd.result)
+  
+    # loop one-sided t test (to determine if distributions are =/= 0)
+        for(i in 1:length(name.list))
+        {
+        # subset data
+        data1<-subset(spd2, spd2$names == name.list[i])
+        # calculate summary data
+        spd.result$mean[i] <- mean(data1$spd, na.rm = TRUE)
+        spd.result$N[i] <- length(data1$spd[!is.na(data1$spd)])
+        spd.result$SE[i] <- sd(data1$spd, na.rm = TRUE)/((length(data1$spd[!is.na(data1$spd)]))^(1/2))
+
+      # if-else statement to test if all values = (variance = 0)
+         if(spd.result$N[i] < 5)
+          {
+          # no test 
+          spd.result$P[i]<-NA
+          spd.result$Fa[i]<-NA
+          
+        } else if(spd.result$SE[i]== 0) {
+          # no test 
+          spd.result$P[i]<-NA
+          spd.result$Fa[i]<-NA
+          
+        } else {
+          
+        # conduct test
+        data1.test<-t.test(data1$spd, mu = 0)
+        
+        # results
+        spd.result$P[i]<-data1.test$p.value
+        spd.result$Fa[i]<-data1.test$statistic
+          }}
+    
+# export results of loop for plotting
+    spd.result<-as.data.frame(spd.result)
+    write.csv(spd.result, 'spd_results_1_30_19.csv')
+        
+###### Is there a linear relatioship between spd and 90th percentile habitat temperature? #####
+  # info:   
+    # separate analyses by sites (one for MS text, one for supplement)
+    # each point represents a tide height * life stage * habitat combination
+    
+    # read in temp data
+    temp<-read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/avg.temp.sites.seasons.habitats.csv")
+    
+    # remove columns not needed
+    temp[,c(1, 5:6, 8:12)]<-NULL
+    
+    # create // dataset for spd's (summarized by site*season*habitat*lifestage
+    spd.data<-prop[,c(1:4, 17:24)]
+    
+    spd.data<-gather(spd.data, place, spd, j.sol.p:a.tide.p, factor_key = TRUE)
+    
+    spd.summary<-ddply(spd.data, c('site', 'tideht', 'place'), summarize, 
+                         avg = mean(spd, na.rm = TRUE),
+                         sd = sd(spd, na.rm = TRUE),
+                         N = length(na.omit(spd)))
+    
+    # add life stage column (if else)
+    spd.summary$lifestage<-NA
+    spd.summary$place<-as.character(spd.summary$place)
+    
+    for(i in 1:length(spd.summary$lifestage))
+    {
+    if(startsWith(spd.summary$place[i], 'j'))
+       {spd.summary$lifestage[i]<- 'juvenile'
+      }else {spd.summary$lifestage[i] <- 'adult'}
+    }
+    
+    head(spd.summary)
+    
+    # re-value habitats in spd data
+    unique(spd.summary$place)
+    spd.summary$place<-revalue(spd.summary$place, 
+                      c('j.sol.p' = 'sol', 'j.agg.p' = 'agg',
+                        'j.sh.p' = 'sh', 'j.tide.p' = 'tp', 
+                        'a.sol.p' = 'sol' , 'a.agg.p' = 'agg',
+                        'a.sh.p' = 'sh', 'a.tide.p' = 'tp'))
+    
+    
+    # summarize temp data by season 
+    temp<-ddply(temp, c('site', 'place'), summarize, 
+                       avg = mean(ninety.movmax, na.rm = TRUE),
+                       sd = sd(ninety.movmax, na.rm = TRUE),
+                       N = length(na.omit(ninety.movmax)))
+    
+    # separate tide height and habitat in temp data set
+      # pulls out first value in string
+      temp$tideht<-substring(temp$place, 1, 1)
+      # all except first value in string
+      temp$hab<-substring(temp$place, 2)
+
+      head(spd.summary)
+      head(temp)
+      
+      
+      # make name // for both datasets
+        # for temp
+        temp$name<-paste(temp$site, temp$place)
+        
+        
+        # for spd
+        spd.summary$tideht<-as.character(spd.summary$tideht)
+        spd.summary$place<-as.character(spd.summary$place)
+        spd.summary$name.p1<-paste(spd.summary$tideht, spd.summary$place, sep = "")
+        
+        spd.summary$name<-paste(spd.summary$site, spd.summary$name.p1)
+  
+      # merge datasets by name (add to spd.summary)
+      head(spd.summary)
+      head(temp)
+      temp<-temp[,c(3:5,8)]
+      
+      spd.temp<-merge(spd.summary, temp, by = 'name')
+      
+      View(spd.temp)
+      colnames(spd.temp)<-c('name', 'site','tideht', 'habitat', 'spd.avg', 'spd.sd', 'spd.n', 'lifestage', 'name2', 'temp.avg', 'temp.sd', 'temp.n')
+      spd.temp$name2<-NULL
+      
+  # Loop linear model 
+      # make lists of sites + stages
+      sites<-unique(spd.temp$site)
+      stages<-unique(spd.temp$lifestage)
+      
+      head(ccsp.adu)
+      
+      # create output data frame
+      linreg.result<-matrix(NA, nrow = 2, ncol = 2)
+      linreg.result<-as.data.frame(linreg.result)
+      colnames(linreg.result)<-sites
+      row.names(linreg.result)<-stages
+      
+      
+  # linear model for each 
+      par(mfrow = c(2,2), pty = 's')
+      for (i in 1:2)
+      {
+        # subset site 
+        site.data<-subset(spd.temp, spd.temp$site == sites[i])
+      
+      for (j in 1:2)
+      {
+        # subset life stage
+        stage.data<-subset(site.data, site.data$lifestage == stages[j])
+        stage.data<-na.omit(stage.data)
+        
+        # run model
+        spd.model<-lm(spd.avg ~ temp.avg, data = stage.data)
+        
+        # results in table
+          # r2 value
+          linreg.result[i,j]<-paste(
+            "r2 = ",summary(spd.model)$r.squared, " P = ", 
+          # p value
+          summary(spd.model)$coefficients[2,4])
+          
+        # plot results
+        plot(spd.avg ~ temp.avg, data = stage.data, main = paste('site = ', stage.data$site[1], ', stage = ', stage.data$lifestage[1]))
+        abline(spd.model)
+        
+      }}
+
+    
+    View(linreg.result)
+    
