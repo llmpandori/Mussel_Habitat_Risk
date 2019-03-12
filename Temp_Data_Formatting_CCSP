@@ -1,0 +1,499 @@
+#####################################################################
+# Title: temperature fill-in code 
+# Purpose: to fill-in missing temp data for ch. 2 manuscript
+# Created by : L. Pandori
+# Created on : 7/16/18 (based off of mid_only_ifelse code from Oceans_Rstudio(1))
+# Last Edited : 3/12/19
+#####################################################################
+### Prepare: load packages + reshape dataset -----
+# Clear workspace
+rm(lists=ls())
+
+# load libraries
+library(readr)  # read + create csv files
+library(plyr)   # summarize data
+library(tidyr)  # re-organize data
+library(gplots) # create heatmaps
+library(lattice)# create level plot (heatmap)
+library(zoo)    # rolling mean calculation, nice plot dates
+
+# load in data (comment out if not in use)
+# CCSP (laptop)
+# tdata2<-read_csv("C:/Users/Lauren Pandori/Box Sync/OCANS_Stats/OCEANS_StationData_CCSP_RVersion_7.13.18.csv")
+
+# CCSP (lab computer)
+ tdata2<-read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_StationData_CCSP_RVersion_7.13.18.csv")
+
+# QC Data: 
+  # create copy of data where NA's in the ccsp_temp column are removed
+  unique(tdata2$cottage_temp)
+  tdata<-subset(tdata2, tdata2$cottage_temp != '#N/A')
+  tdata<-subset(tdata, tdata$cottage_temp != 'NA')
+
+  # check unique entries for factors
+  unique(tdata$season)
+  unique(tdata$site)
+  
+  # re-organize from wide to long format
+  # Source: https://njsilbiger.github.io/ReorganizeData/
+  data3<-gather(tdata, place, temp, c(cottage_temp, ltp:hsol), factor_key=TRUE)
+  View(data3)
+  
+  data3$temp<-as.numeric(paste(data3$temp))
+  
+  data3$place2<-data3$place
+  
+  unique(data3$place2)
+  data3$place3<-revalue(data3$place2, c('cottage_temp' = 'Cottage', 'lsol' = 'Low Solitary', 'lagg' = 'Low Aggregate', 'lsh' = 'Low Shelter', 'ltp' = 'Low Tidepool', 'msol' = 'Mid Solitary', 'magg' = 'Mid Aggregate', 'msh' = 'Mid Shelter', 'mtp' = 'Mid Tidepool', 'hsol' = 'High Solitary', 'hagg' = 'High Aggregate', 'hsh' = 'High Shelter', 'htp' = 'High Tidepool'))
+  
+  head(data3$round_time)
+  data3$round_time2 <-as.POSIXct(data3$round_time, format = '')
+    
+### Heamap: raw data -----
+    # level plot data format: 1 row, 1 colum + factors
+    # sources: 
+      # http://r.789695.n4.nabble.com/How-to-change-color-the-default-in-levelplot-td908225.html
+      # http://www.r-graph-gallery.com/28-turn-y-axis-upside-down-in-levelplot
+    # https://stackoverflow.com/questions/7622041/how-to-add-lines-to-a-levelplot-made-using-lattice-abline-somehow-not-working
+    unicorn<- colorRampPalette(c('mediumorchid1','lightblue', 'aquamarine', 'coral', 'indianred1'))
+    levelplot(temp ~ number_date*place3,
+              # temp in middle
+              # x = number_date, y = place
+              data3, # specify dataset
+              col.regions = unicorn,
+              scales = list(tck = c(1,0)), # tick only on x and y
+              panel = function(...){ # add horizontal lines to plot
+                panel.levelplot(...)
+                panel.abline(h = 1.5) # separate cottage temp
+                panel.abline(h = 5.5) # separate low from mid
+                panel.abline(h = 9.5) # separate mid from high 
+              }
+              )
+  
+      # reminder to save image as png + copy/paste into pptx
+    
+### De-tide data -----
+    # make numeric columns as.numeric
+    tdata$cottage_temp<-as.numeric(paste(tdata$cottage_temp))
+    tdata$msol<-as.numeric(paste(tdata$msol))
+    tdata$msh<-as.numeric(paste(tdata$msh))
+    tdata$mtp<-as.numeric(paste(tdata$mtp))
+    tdata$lsh<-as.numeric(paste(tdata$lsh))
+    tdata$ltp<-as.numeric(paste(tdata$ltp))
+    
+    # subset tide heights (different times of emersion)
+    high<-tdata[,1:10]
+    mid<-tdata[,c(1:6,11:14)]
+    low<-tdata[,c(1:6,15:18)]
+
+    # create column telling whether logger is in air or water
+    low$airwater<-NA # make empty column
+    low$airwater<-ifelse(low$tide >= 0.6, 'water', 'air') # designate
+    
+    mid$airwater<-NA
+    mid$airwater<-ifelse(mid$tide >= 1.2, 'water', 'air')
+    
+    high$airwater<-NA
+    high$airwater<-ifelse(high$tide >= 1.8, 'water', 'air')
+
+    # subset, isolating air temperatures
+    low<-subset(low, low$airwater == 'air')
+    mid<-subset(mid, mid$airwater == 'air')
+    high<-subset(high, high$airwater == 'air')
+    
+    # get rid of extra column
+    low$airwater<-NULL
+    mid$airwater<-NULL
+    high$airwater<-NULL
+    
+    # re-format data to long format
+    low2<-gather(low, place, temp, c(lsol:ltp))
+    mid2<-gather(mid, place, temp, c(msol:mtp))
+    high2<-gather(high, place, temp, c(cottage_temp, hsol:htp))
+    
+    low2$cottage_temp<-NULL
+    mid2$cottage_temp<-NULL
+    
+    # stack on top of eachother (same column headers)
+    data4<-rbind(low2,mid2,high2)
+    View(data4)
+    
+### Heatmap: de-tided raw data ------
+    # create column of unique names for each row
+    data4$place<-as.factor(data4$place, ordered  = TRUE, levels = c('cottage_temp', 'lsol', 'lagg', 'lsh', 'ltp', 'msol', 'magg', 'msh', 'mtp', 'hsol', 'hagg', 'hsh', 'htp'))
+    
+    # coerce to numeric
+    data4$place2<- revalue(data4$place, c('cottage_temp' = '1', 'lsol' = '2', 'lagg' = '3', 'lsh' = '4', 'ltp' = '5', 'msol' = '6', 'magg' = '7', 'msh' = '8', 'mtp' = '9', 'hsol' = '10', 'hagg' = '11', 'hsh' = '12', 'htp' = '13'))
+    
+    data4$place2<-as.numeric(paste(data4$place2))
+  
+    # plot
+    levelplot(temp ~ number_date*place2,
+              # temp in middle
+              # x = number_date, y = place
+              data4, # specify dataset
+              col.regions = unicorn,
+              scales = list(tck = c(1,0)), # tick only on x and y
+              panel = function(...){ # add horizontal lines to plot
+                panel.levelplot(...)
+                panel.abline(h = 1.5) # separate cottage temp
+                panel.abline(h = 5.5) # separate low from mid
+                panel.abline(h = 9.5) # separate mid from high 
+              }
+    ) 
+       
+### Fill: lm to relate station to habitat temps ----- 
+  
+    # see if we should plot seasons separately
+      # all
+      low$season<-as.factor(low$season)
+      plot(low$cottage_temp, low$lsol)
+      plot(low$cottage_temp, low$lsol, col = low$season)
+      
+      # test to see if season is a significant factor
+      season.model<-lm(lsol ~ cottage_temp + season, data = low)
+      summary(season.model)
+        # significant...so separate by season where possible
+      
+  # linear regression for each tide height, habitat + season
+      # create dataset (data5)
+      low3<-gather(low, place, temp, c(lsol:ltp))
+      low3$season2<-NULL
+      mid3<-gather(mid, place, temp, c(msol:mtp))
+      high3<-gather(high, place, temp, c(hsol:htp))
+      data5<-rbind(low3,mid3,high3)
+      data5$temp<-as.numeric(paste(data5$temp))
+      View(data5)
+      
+      # convert both season + habitat (place) to numbers
+      unique(data5$season)
+      data5$season2<-revalue(data5$season, c('Fall' = '1', 'Winter' = '2', 'Spring' = '3', 'Summer' = '4'))
+      
+      unique(data5$place)
+      data5$place2<-revalue(data5$place, c('lsol' = '1', 'lagg' = '2', 'lsh' = '3', 'ltp' = '4', 'msol' = '5', 'magg' = '6', 'msh' = '7', 'mtp' = '8', 'hsol' = '9', 'hagg' = '10', 'hsh' = '11', 'htp' = '12'))
+      
+      data5$season2<-as.numeric(paste(data5$season2))
+      data5$place2<-as.numeric(paste(data5$place2))
+      
+      # make lists over which to loop
+      season3<-unique(data5$season2) # 4 total
+      place3<-unique(data5$place2) # 12 total
+      
+      # create results table
+      results2<-matrix(NA, nrow = 12, ncol = 20)
+      results2<-as.data.frame(results2)
+      
+      colnames(results2)<-c('fall.p', 'fall.r', 'fall.m', 'fall.b', 'winter.p', 'winter.r', 'winter.m', 'winter.b', 'spring.p', 'spring.r', 'spring.m', 'spring.b', 'summer.p', 'summer.r', 'summer.m', 'summer.b', 'all.p', 'all.r', 'all.m', 'all.b')
+      row.names(results2)<-c('lsol', 'lagg', 'lsh', 'ltp', 'msol', 'magg', 'msh', 'mtp', 'hsol', 'hagg', 'hsh', 'htp')
+      
+      
+    # subset data5 by seasons
+      unique(data5$season)
+      
+      data5.fall<-subset(data5, data5$season == 'Fall')
+      data5.winter<-subset(data5, data5$season == 'Winter')
+      data5.spring<-subset(data5, data5$season == 'Spring')
+      data5.summer<-subset(data5, data5$season == 'Summer')
+      
+    # set up plot arrangement + parameters
+      par(mfrow = c(3,4)) # 4 x 3 arrangement 
+      par(mar=c(1,1,1,1)) # makes smaller plots so they fit
+      
+    # loop for all seasons (combined)
+      for(i in 1:length(place3)){
+        # subset data of interest
+        dat<-subset(data5, data5$place2 == place3[i])
+        
+        # linear model
+        if (all(is.na(dat$temp)))
+        {
+          results2$all.r[i]<-'ND'
+          results2$all.p[i]<-'ND'
+          results2$all.b[i]<-'ND'
+          results2$all.m[i]<-'ND'
+          
+          plot(1,2,  main = paste('No data', place3[i]))
+          abline(mod)
+          
+        }
+        else {
+          
+          mod<-lm(dat$temp ~ dat$cottage_temp)
+          
+          # put results in table
+          results2$all.r[i]<-summary(mod)$adj.r.squared
+          results2$all.p[i]<-summary(mod)$coefficients[2,4]
+          results2$all.b[i]<-summary(mod)$coefficients[1,1]
+          results2$all.m[i]<-summary(mod)$coefficients[2,1]
+          
+          plot(dat$cottage_temp, dat$temp, xlab = 'Cottage Temp.', ylab = 'Uhab Temp.', main = paste('Habitat', place3[i]))
+          abline(mod)}
+        
+      }
+      
+    # loop it! -- fall
+      for(i in 1:length(place3)){
+        # subset data of interest
+        dat<-subset(data5.fall, data5.fall$place2 == place3[i])
+        
+        # linear model
+        if (all(is.na(dat$temp)))
+        {
+          results2$fall.r[i]<-'ND'
+          results2$fall.p[i]<-'ND'
+          results2$fall.b[i]<-'ND'
+          results2$fall.m[i]<-'ND'
+          
+          plot(1,2,  main = paste('No data', place3[i]))
+          abline(mod)
+          
+        }
+           else {
+             
+        mod<-lm(dat$temp ~ dat$cottage_temp)
+        
+        # put results in table
+        results2$fall.r[i]<-summary(mod)$adj.r.squared
+        results2$fall.p[i]<-summary(mod)$coefficients[2,4]
+        results2$fall.b[i]<-summary(mod)$coefficients[1,1]
+        results2$fall.m[i]<-summary(mod)$coefficients[2,1]
+        
+        plot(dat$cottage_temp, dat$temp, xlab = 'Cottage Temp.', ylab = 'Uhab Temp.', main = paste('Habitat', place3[i]))
+          abline(mod)}
+    
+      }
+
+     # Repeat for winter, spring, and summer
+      for(i in 1:length(place3)){
+        # subset data of interest
+        dat<-subset(data5.winter, data5.winter$place2 == place3[i])
+        
+        # linear model
+        if (all(is.na(dat$temp)))
+        {
+          results2$winter.r[i]<-'ND'
+          results2$winter.p[i]<-'ND'
+          results2$winter.b[i]<-'ND'
+          results2$winter.m[i]<-'ND'
+          
+          plot(1,2,  main = paste('No data', place3[i]))
+          abline(mod)
+          
+        }
+        else {
+          
+          mod<-lm(dat$temp ~ dat$cottage_temp)
+          
+          # put results in table
+          results2$winter.r[i]<-summary(mod)$adj.r.squared
+          results2$winter.p[i]<-summary(mod)$coefficients[2,4]
+          results2$winter.b[i]<-summary(mod)$coefficients[1,1]
+          results2$winter.m[i]<-summary(mod)$coefficients[2,1]
+          
+          plot(dat$cottage_temp, dat$temp, xlab = 'Cottage Temp.', ylab = 'Uhab Temp.', main = paste('Habitat', place3[i]))
+          abline(mod)}
+        
+      }
+      
+      # Spring
+      for(i in 1:length(place3)){
+        # subset data of interest
+        dat<-subset(data5.spring, data5.spring$place2 == place3[i])
+        
+        # linear model
+        if (all(is.na(dat$temp)))
+        {
+          results2$spring.r[i]<-'ND'
+          results2$spring.p[i]<-'ND'
+          results2$spring.b[i]<-'ND'
+          results2$spring.m[i]<-'ND'
+          
+          plot(1,2,  main = paste('No data', place3[i]))
+          abline(mod)
+          
+        }
+        else {
+          
+          mod<-lm(dat$temp ~ dat$cottage_temp)
+          
+          # put results in table
+          results2$spring.r[i]<-summary(mod)$adj.r.squared
+          results2$spring.p[i]<-summary(mod)$coefficients[2,4]
+          results2$spring.b[i]<-summary(mod)$coefficients[1,1]
+          results2$spring.m[i]<-summary(mod)$coefficients[2,1]
+          
+          plot(dat$cottage_temp, dat$temp, xlab = 'Cottage Temp.', ylab = 'Uhab Temp.', main = paste('Habitat', place3[i]))
+          abline(mod)}
+        
+      }
+      
+      # Summer
+      for(i in 1:length(place3)){
+        # subset data of interest
+        dat<-subset(data5.summer, data5.summer$place2 == place3[i])
+        
+        # linear model
+        if (all(is.na(dat$temp)))
+        {
+          results2$summer.r[i]<-'ND'
+          results2$summer.p[i]<-'ND'
+          results2$summer.b[i]<-'ND'
+          results2$summer.m[i]<-'ND'
+          
+          plot(1,2,  main = paste('No data', place3[i]))
+          abline(mod)
+          
+        }
+        else {
+          
+          mod<-lm(dat$temp ~ dat$cottage_temp)
+          
+          # put results in table
+          results2$summer.r[i]<-summary(mod)$adj.r.squared
+          results2$summer.p[i]<-summary(mod)$coefficients[2,4]
+          results2$summer.b[i]<-summary(mod)$coefficients[1,1]
+          results2$summer.m[i]<-summary(mod)$coefficients[2,1]
+          
+          plot(dat$cottage_temp, dat$temp, xlab = 'Cottage Temp.', ylab = 'Uhab Temp.', main = paste('Habitat', place3[i]))
+          abline(mod)}
+        
+      }
+      
+      View(results2)
+      
+      # Export as CSV for supplementary material
+      write.csv(results2, "OCEANS_TempData_LinearRegressions_CCSP_7.24.18.csv")
+### Fill in missing data 2 ways using if else statements
+# 1: with general regressions (no seasons incorporated)
+# 2: with season-specific regressions (using general for those w/o)
+      
+  # Re-format + subset results table by season
+      # add number column (for each uhab -- same as above)
+      results2$uhab<-c(1,2,3,4,5,6,7,8,9,10,11,12)
+      
+      fall.result<-results2[,c(1:4,21)]
+      winter.result<-results2[,c(5:8,21)]
+      spring.result<-results2[,c(9:12,21)]
+      summer.result<-results2[,c(13:16,21)]
+      all.result<-results2[,17:21]
+      
+      colnames(fall.result)<-c('p', 'r', 'm', 'b','place2')
+      colnames(winter.result)<-c('p', 'r', 'm', 'b','place2')
+      colnames(spring.result)<-c('p', 'r', 'm', 'b','place2')
+      colnames(summer.result)<-c('p', 'r', 'm', 'b','place2')
+      colnames(all.result)<-c('p', 'r', 'm', 'b','place2')
+    
+    # Merge tables using 'join' in plyr package'
+      # source: https://stackoverflow.com/questions/15303283/how-to-do-vlookup-and-fill-down-like-in-excel-in-r
+      View(data5)
+      all.result
+      data5.all<-join(data5, all.result, by = 'place2')
+      
+      # repeat for other datasets (seasons)
+      data5.fa<-join(data5.fall, fall.result, by = 'place2')
+      data5.wi<-join(data5.winter, winter.result, by = 'place2')
+      data5.sp<-join(data5.spring, spring.result, by = 'place2')
+      data5.su<-join(data5.summer, summer.result, by = 'place2')
+      
+      # make numeric columns numeric
+      data5.all$m<-as.numeric(paste(data5.all$m))
+      data5.all$b<-as.numeric(paste(data5.all$b))
+      
+      data5.fa$m<-as.numeric(paste(data5.fa$m))
+      data5.fa$b<-as.numeric(paste(data5.fa$b))
+      
+      data5.wi$m<-as.numeric(paste(data5.wi$m))
+      data5.wi$b<-as.numeric(paste(data5.wi$b))
+      
+      data5.sp$m<-as.numeric(paste(data5.sp$m))
+      data5.sp$b<-as.numeric(paste(data5.sp$b))
+      
+      data5.su$m<-as.numeric(paste(data5.su$m))
+      data5.su$b<-as.numeric(paste(data5.su$b))
+      
+      # calculate predicted values for temp.
+      data5.all$predict<-(data5.all$m*data5.all$cottage_temp) + data5.all$b
+      data5.fa$predict<-(data5.fa$m*data5.fa$cottage_temp) + data5.fa$b
+      data5.wi$predict<-(data5.wi$m*data5.wi$cottage_temp) + data5.wi$b
+      data5.sp$predict<-(data5.sp$m*data5.sp$cottage_temp) + data5.sp$b
+      data5.su$predict<-(data5.su$m*data5.su$cottage_temp) + data5.su$b
+      
+      # use if else to create a filled-in temp. record
+      data5.all$fill<-ifelse(!is.na(data5.all$temp), data5.all$temp, data5.all$predict)
+      data5.fa$fill<-ifelse(!is.na(data5.fa$temp), data5.fa$temp, data5.fa$predict)
+      data5.wi$fill<-ifelse(!is.na(data5.wi$temp), data5.wi$temp, data5.wi$predict)
+      data5.sp$fill<-ifelse(!is.na(data5.sp$temp), data5.sp$temp, data5.sp$predict)
+      data5.su$fill<-ifelse(!is.na(data5.su$temp), data5.su$temp, data5.su$predict)
+      
+      # put season data together to make a year
+      data5.season<-rbind(data5.fa, data5.wi, data5.sp, data5.su)
+      data5.year<-data5.all
+      # now we have both methods (filled by season and by year)
+      
+      
+      
+### 6-hr moving avg calculation-----
+  # order by date (number_time)
+      
+      
+  # source: http://uc-r.github.io/ts_moving_averages
+      data5.season$movingavg<-rollmean(data5.season$fill, k = 12, fill = NA, data = data5.season)
+      data5.year$movingavg<-rollmean(data5.year$fill, k = 12, fill = NA, data = data5.year)
+  
+### Heatmap: filled data Filled-in data as heatmap-----
+    data5.year$place<-as.factor(data5.year$place)
+     View(data5.year)
+    
+     # give new column with order of plot layer stack (1 on bottom, 12 on top of plot)
+     unique(data5.year$place)
+     data5.year$layer<-revalue(data5.year$place, c('lsol' = '4', 'lagg' = '3', 'lsh' = '2', 'ltp' = '1', 'msol' = '8', 'magg' = '7', 'msh' = '6', 'mtp' = '5', 'hsol' = '12', 'hagg' = '11', 'hsh' = '10', 'htp' = '9'))
+     
+     data5.year$layer<-as.numeric(paste(data5.year$layer))
+     unicorn2<- colorRampPalette(c('mediumorchid1','lightblue', 'aquamarine', 'gold', 'coral', 'indianred1'))
+     
+     rainbow2<-rainbow(18)
+     
+     
+      data5.year$Date<-data5.year$number_date
+      levelplot(fill ~ Date*layer,
+                # temp in middle
+                # x = number_date, y = layer
+                data5.year, # specify dataset
+                col.regions = rainbow2[1:16],
+                scales = list(tck = c(0,0)), # tick only on x and y
+                ylab = 'Tide height and habitat',
+                panel = function(...)
+                  {
+                  panel.levelplot(...)
+                  # solid lines separate tide heights
+                  panel.abline(h = 4.5)
+                  panel.abline(h = 8.5)
+                  # dashed lines separate microhabitats
+                  panel.abline(h = 1.5, lty = 2)
+                  panel.abline(h = 2.5, lty = 2)
+                  panel.abline(h = 3.5, lty = 2)
+                  panel.abline(h = 5.5, lty = 2)
+                  panel.abline(h = 6.5, lty = 2)
+                  panel.abline(h = 7.5, lty = 2)
+                  panel.abline(h = 9.5, lty = 2)
+                  panel.abline(h = 10.5, lty = 2)
+                  panel.abline(h = 11.5, lty = 2)
+                })
+      
+# Prepare data for export (to use in vulnerability prediction)
+    export.data<-data5.year
+    export.data$cottage_temp<-NULL
+    export.data$tide<-NULL
+    export.data$site<-NULL
+    export.data$season2<-NULL
+    export.data$place2<-NULL
+    export.data$layer<-NULL
+    export.data$p<-NULL
+    export.data$r<-NULL
+    export.data$b<-NULL
+    export.data$m<-NULL
+    export.data$predict<-NULL
+    
+    # export
+    # !!! Change name if using LCDM data !!!
+    write.csv(export.data, 'OCEANS_TempData_CCSP_7.24.18.csv')
