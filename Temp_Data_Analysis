@@ -1,0 +1,337 @@
+################################################################
+#Title: Temperature Data -- Distributions + Visualization
+#Purpose: Calculate presented metrics of habitat temperature for Habitat Risk MS
+#Created by: L Pandori
+#Created: 12/10/18
+#Last edited: 3/12/19
+################################################################
+
+##### Data prep and package upload #####
+#Clear workspace
+rm(lists=ls())
+
+#load libraries
+library(MASS)     # binmial regression
+library(readr)    # read csv files
+library(reshape)  # delimited column separation 
+library(nlme)     # mixed effects model 
+library(plyr)     # re-value categorical data, summarize
+library(lattice)  # levelplot for heatmap-esque plots
+library(RColorBrewer) # make color palettes
+
+##### Temp. data import and formatting #####
+
+# Load in temp. data (from Station_Temp_Fill-in_Code_etc.) @ 2 sites
+
+# CCSP
+  # lab computer
+  ccsp.temp <- read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_CCSP_7.24.18.csv")
+
+  # laptop
+  #ccsp.temp <- read_csv("C:/Users/Lauren Pandori/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_CCSP_7.24.18.csv")
+
+# QC CCSP data
+head(ccsp.temp)
+# weird column added...remove so lines up with LCDM data
+ccsp.temp$X1<-NULL
+
+# LCDM 
+  # lab computer
+  lcdm.temp <- read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_LCDM_7.24.18.csv")
+
+  # laptop
+  #lcdm.temp <- read_csv("C:/Users/Lauren Pandori/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_LCDM_7.24.18.csv")
+  
+# QC LCDM data
+head(lcdm.temp)
+lcdm.temp$X1<-NULL
+head(ccsp.temp)
+head(lcdm.temp)
+
+# add site identifier column
+ccsp.temp$site<-'ccsp'
+lcdm.temp$site<-'lcdm'
+
+# remove Date column from 'ccsp'
+ccsp.temp$Date<-NULL
+
+# make column names consistent
+colnames(lcdm.temp)<-colnames(ccsp.temp)
+
+# merge datsets
+temp<-rbind(ccsp.temp, lcdm.temp)
+# get rid of weird 1st column
+temp$X1<-NULL
+# remove decimal from number_date (to create day category)
+temp$number_day<-as.integer(temp$number_date)
+# make temp columns numeric
+temp$temp<-as.numeric(paste(temp$temp))
+temp$fill<-as.numeric(paste(temp$fill))
+temp$movingavg<-as.numeric(paste(temp$movingavg))
+
+# calculate daily max a few ways
+head(temp)
+dailytemp<-ddply(temp, c('site', 'season', 'place', 'number_day'), summarize, 
+                 movavg.max = max(movingavg, na.rm = TRUE))
+
+# Shows daily 6-hour average temps for each day/site/season/place
+View(avgtemp)
+
+# summarize across days (mean for each site/season/place)
+
+avgtemp<-ddply(dailytemp, c('site', 'place'),
+               summarize,
+               avg.movmax = mean(movavg.max),
+               ninety.movmax = quantile(movavg.max, c(.9), na.rm = TRUE),
+               eighty.movmax = quantile(movavg.max, c(.75), na.rm = TRUE))
+
+# make simplified data output for easy plotting of 90th perentile + seasons
+seasontemp<-ddply(dailytemp, c('site', 'place', 'season'),
+                  summarize,
+                  ninety.movmax = quantile(movavg.max, c(.9), na.rm = TRUE))
+ninetytemp<-ddply(dailytemp, c('site', 'place'), 
+                  summarize, 
+                  ninety.movmax = quantile(movavg.max, c(.9), na.rm = TRUE))
+
+# plot nineteth percentile as bar plot with text "points" for each season 90th percentile temperatures (do they differ?) -- done in excel
+  
+
+##### See if temp. distributions differ (X2 test) #####
+  # Kolmogorov-Smirnov tests to determine if come from same distribution
+  # https://stat.ethz.ch/R-manual/R-devel/library/stats/html/ks.test.html
+  
+    # Ho = all come from same distribution 
+    # Ha = at least one of the null hypotheses is false
+
+# Test 1 # Compare habitats + tide heights (w/in each site)
+  # create list of things we want to compare (tideht, habitat)
+  dailytemp$name<-paste(dailytemp$place)
+  unique(dailytemp$name)
+  
+  # create list of the all possible combinations of names
+  dailytemp$name<-as.factor(dailytemp$name)
+  names<-unique(dailytemp$name)
+  combo<-combn(names,2, simplify = FALSE)
+  combo<-as.data.frame(combo)
+
+  # convert from wide to long format (transpose)
+  combo<-t(combo)
+  View(combo)
+  
+  # re-label first column to be numbers
+  row.names(combo)<-c(1:66)
+  
+  # re-label rows (set.one, set.two)
+  colnames(combo)<-c('set1', 'set2')
+  head(combo)
+  
+  # format data frame
+  combo<-as.data.frame(combo)
+  combo$set1<-as.character(combo$set1)
+  combo$set2<-as.character(combo$set2)
+  
+  # Create output data frame
+  ks.results<-matrix(nrow=12,ncol=12)
+  ks.results<-as.data.frame(ks.results)
+  colnames(ks.results)<-c(
+    'hsol', 'hagg', 'hsh', 'htp',
+    'msol', 'magg', 'msh', 'mtp',
+    'lsol', 'lagg', 'lsh', 'ltp')
+  row.names(ks.results)<-c(
+    'hsol', 'hagg', 'hsh', 'htp',
+    'msol', 'magg', 'msh', 'mtp',
+    'lsol', 'lagg', 'lsh', 'ltp')
+  head(ks.results)
+  # duplicate for each site
+  ccsp.result<-ks.results
+  lcdm.result<-ks.results
+  
+  # duplicate for p-value only output (levelplot colors)
+  ccsp.result.p<-ks.results
+  lcdm.result.p<-ks.results
+  
+  # subset data by site
+  ccsp.dailytemp<-subset(dailytemp, dailytemp$site == 'ccsp')
+  lcdm.dailytemp<-subset(dailytemp, dailytemp$site == 'lcdm')
+
+  # Loop for Kolmogorov-Smirnov tests (all combinations -- including separate sites)
+  
+  # for ccsp
+  for (i in 1:66)
+  {
+    # subset data 
+    dist1<-combo$set1[i]
+    dist2<-combo$set2[i]
+    
+    # subset relevant data
+    all.dist1<-subset(ccsp.dailytemp, ccsp.dailytemp$name == dist1)
+    all.dist2<-subset(ccsp.dailytemp, ccsp.dailytemp$name == dist2)
+    
+    # if/else statement -- proceed only if temp values available
+    if(all(all.dist1$movavg.max == -Inf)|all(all.dist2$movavg.max == -Inf))
+      # if either dist 1 or dist 2 is all NA's, fill in results with ND
+    {
+      # results in table
+      ccsp.result[dist1, dist2]<-'ND'
+      ccsp.result.p[dist1, dist2]<-'ND'
+    }
+    
+    else{
+      # calculate 90th percentile data
+      # dist 1
+      nine.dist1<-subset(all.dist1, all.dist1$movavg.max > quantile(all.dist1$movavg.max, c(.9), na.rm = TRUE))
+      # dist 2
+      nine.dist2<-subset(all.dist2, all.dist2$movavg.max > quantile(all.dist2$movavg.max, c(.9), na.rm = TRUE))
+      
+      nine.test<-ks.test(nine.dist1$movavg.max, nine.dist2$movavg.max)
+      
+      # results in table 
+      ccsp.result[dist1,dist2]<-paste(nine.test$statistic, ',', nine.test$p.value)
+      ccsp.result.p[dist1,dist2]<-nine.test$p.value
+    }}
+
+    # write a csv file to use to plot in excel
+    write.csv(ccsp.result.p, 'OCEANS_CCSP_TempKSTest_NoSeason_Result.csv')
+    
+    # for lcdm
+  for (i in 1:66)
+  {
+    # subset data 
+    dist1<-combo$set1[i]
+    dist2<-combo$set2[i]
+    
+    # subset relevant data
+    all.dist1<-subset(lcdm.dailytemp, lcdm.dailytemp$name == dist1)
+    all.dist2<-subset(lcdm.dailytemp, lcdm.dailytemp$name == dist2)
+    
+    # if/else statement -- proceed only if temp values available
+    if(all(all.dist1$movavg.max == -Inf)|all(all.dist2$movavg.max == -Inf))
+      # if either dist 1 or dist 2 is all NA's, fill in results with ND
+    {
+      # results in table
+      lcdm.result[dist1, dist2]<-'ND'
+      lcdm.result.p[dist1, dist2]<-'ND'
+    }
+    
+    else{
+      # calculate 90th percentile data
+      # dist 1
+      nine.dist1<-subset(all.dist1, all.dist1$movavg.max > quantile(all.dist1$movavg.max, c(.9), na.rm = TRUE))
+      # dist 2
+      nine.dist2<-subset(all.dist2, all.dist2$movavg.max > quantile(all.dist2$movavg.max, c(.9), na.rm = TRUE))
+      
+      nine.test<-ks.test(nine.dist1$movavg.max, nine.dist2$movavg.max)
+      
+      # results in table 
+      lcdm.result[dist1,dist2]<-paste(nine.test$statistic, ',', nine.test$p.value)
+      lcdm.result.p[dist1,dist2]<-nine.test$p.value
+    }}
+    
+    # write a csv file to use to plot in excel
+    write.csv(lcdm.result.p, 'OCEANS_LCDM_TempKSTest_NoSeason_Result.csv')
+  
+    # calculate bonferroni correction alpha value
+      # alpha = 0.05/number of comparisons
+      noseason.alpha = 0.05/66 # alpha = 0.00076
+
+# Test 2 # Compare seasons within a tide height x habitat combo
+  # create list of seasons
+  unique(dailytemp$season)
+  
+  # create list of all possible combinations of season2
+  dailytemp$season2<-as.factor(dailytemp$season)
+  seasons<-unique(dailytemp$season)
+  combo2<-combn(seasons, 2, simplify = FALSE)
+  combo2<-as.data.frame(combo2)
+  # convert from wide to long format (transpose)
+  combo2<-t(combo2)
+  
+  # re-label first column to be numbers
+  row.names(combo2)<-c(1:6)
+  
+  # re-label rows (set.one, set.two)
+  colnames(combo2)<-c('set1', 'set2')
+  head(combo2)
+
+  
+  # format data frame
+  combo2<-as.data.frame(combo2)
+  combo2$set1<-as.character(combo2$set1)
+  combo2$set2<-as.character(combo2$set2)
+  
+  
+  # add column with combined entries + create list
+  combo2$sets<-paste(combo2$set1, combo2$set2)
+  combo2$sets<-as.factor(combo2$sets)
+  sets<-unique(combo2$sets)
+  
+  # give each combo a number
+  combo2$number<-c(1,2,3,4,5,6)
+  
+  # create list of unique tide height x habitat x site factors
+  dailytemp$name2<-paste(dailytemp$site, dailytemp$name)
+  site.place<-unique(dailytemp$name2)
+  
+  # Create output data frame
+  s.result<-matrix(nrow=24,ncol=6)
+  s.result<-as.data.frame(s.result)
+  row.names(s.result)<-c(
+    'ccsp hsol', 'ccsp hagg', 'ccsp hsh', 'ccsp htp',
+    'ccsp msol', 'ccsp magg', 'ccsp msh', 'ccsp mtp',
+    'ccsp lsol', 'ccsp lagg', 'ccsp lsh', 'ccsp ltp',
+    'lcdm hsol', 'lcdm hagg', 'lcdm hsh', 'lcdm htp',
+    'lcdm msol', 'lcdm magg', 'lcdm msh', 'lcdm mtp',
+    'lcdm lsol', 'lcdm lagg', 'lcdm lsh', 'lcdm ltp'
+    )
+  colnames(s.result)<-c(1,2,3,4,5,6)
+
+  head(s.result)
+
+  # Nested Loop for Kolmogorov-Smirnov tests (combos of seasons nested within site x tideht x habitat list)
+  
+  for (i in 1:24)
+  {
+    # subset data by site x place
+    sitexplace<-subset(dailytemp, dailytemp$name2 == site.place[i])
+    
+    # loop combos
+    for(j in 1:6)
+    {
+    
+    # subset relevant data
+    all.dist1<-subset(sitexplace, sitexplace$season == combo2$set1[j])
+    all.dist2<-subset(sitexplace, sitexplace$season == combo2$set2[j])
+    
+    # if/else statement -- proceed only if temp values available
+    if(all(all.dist1$movavg.max == -Inf)|all(all.dist2$movavg.max == -Inf))
+      # if either dist 1 or dist 2 is all NA's, fill in results with ND
+    {
+      # results in table
+      s.result[site.place[i], combo2$number[j]] = 'ND'
+    }
+    
+    else{
+      # calculate 90th percentile data
+      # dist 1
+      nine.dist1<-subset(all.dist1, all.dist1$movavg.max > quantile(all.dist1$movavg.max, c(.9), na.rm = TRUE))
+      # dist 2
+      nine.dist2<-subset(all.dist2, all.dist2$movavg.max > quantile(all.dist2$movavg.max, c(.9), na.rm = TRUE))
+      
+      nine.test<-ks.test(nine.dist1$movavg.max, nine.dist2$movavg.max)
+      
+      # results in table 
+      s.result[site.place[i], combo2$number[j]] <- nine.test$p.value
+      
+    }}}
+  # add text values to rows in result data frame
+  colnames(s.result)<-sets
+
+  # write a csv file to use to plot in excel
+  write.csv(s.result, 'OCEANS_KSTest_BothSites_WithSeason.csv')
+
+
+
+
+# Summarize daily max temps by 90th percentile thresholds to plot (in excel)
+    write.csv(avgtemp, 'temp_thresholds_all.csv')
+    
