@@ -1,9 +1,9 @@
-################################################################
+#################################################################
 #Title: LT50 and SPD Code for Habitat Project
-#Purpose: Calculate LT50's for all combinations of factors, and create SPD's from temperature data to calculate risk
+#Purpose: Calculate LT50's for all combinations of factors, and create SPD's from temperature data to calculate risk (# days exposure > LT50)
 #Created by: L Pandori
 #Created: 10/31/17
-#Last edited: 3/12/19
+#Last edited: 2/15/20
 ################################################################
 
 ##### Data prep and package upload #####
@@ -20,10 +20,7 @@
   library(RColorBrewer) # make color palettes
 
   # load in data (choose computer)
-  # laptop
-  # ttdata<-read_csv("C:/Users/Lauren Pandori/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TT_Survival_ALL_7.27_Rversion.csv")
-  # lab computer
-  ttdata<-read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TT_Survival_ALL_7.27_Rversion.csv")
+  ttdata<-read_csv("OCEANS_TT_Survival_ALL_2.20_Rversion.csv")
 
   # remove unnecessary columns
   ttdata$note<-NULL
@@ -32,7 +29,14 @@
   ttdata$wetweight<-NULL
 
   head(ttdata)
-
+  
+##### Find average treatment and control temps across seasons #####
+  ctrltemp <- ddply(ttdata, c('month', 'tmt'), summarize,
+                 temp.avg = mean(temp, na.rm = TRUE),
+                 temp.se = sd(temp, na.rm = TRUE)/sqrt(length(temp))
+                 )
+  ctrltemp
+ 
 ##### Calculate LT50s #####
   # create output data frame
   tt.results<-matrix(NA, nrow = 192, ncol = 3)
@@ -72,7 +76,7 @@ for (i in 1:192){
   tt.results$lifestage[i]<-data$lifestage[1]
   tt.results$uhab[i]<-data$uhab[1]
   # put in average size of mussels
-  tt.results$avg.size[i]<-mean(data$length, na.omit = TRUE)
+  tt.results$avg.size[i]<-mean(data$length, na.rm = TRUE)
 }
 
 # Save as CSV for prediction
@@ -122,13 +126,51 @@ for (i in 1:length(ID.days))
   tt.results2$lifestage[i]<-data1$lifestage[1]
   tt.results2$uhab[i]<-data1$uhab[1]
   # add in average size for regression
-  tt.results$avg.size[i]<-mean(data1$length, na.omit = TRUE)
+  tt.results2$avg.size[i]<-mean(data1$length, na.rm = TRUE)
 }}
 
 # change name of results table for easier analysis
   tt<-tt.results
+
+# LT50 plot example for supplemental information 
+  # mid adult solitary March CCSP as example
+  # calculation of LT50
+    i = 179
+    # subset data of interest
+    data<-subset(ttdata, ttdata$ID == IDs[i]) 
+    # LT50 calculation
+    survival = cbind(data$live, data$dead)
+    # binomial regression
+    surv.model <- glm(survival ~ data$avgtemp, binomial)
+    # predict LT50 and SE from model
+    lt<-dose.p(surv.model, p = 0.5)
+    
+    # prop survival from each temp
+    data2 <- data
+    
+    data2 <- ddply(data, c('tmt'), summarize,
+                   live = sum(live, na.rm = TRUE),
+                   dead = sum(dead, na.rm = TRUE),
+                   propsurv = sum(live)/sum(live+dead),
+                   tempavg = mean(temp))
   
-##### Test for differences across tide heights, habitats + life stages for each site #####
+  # plot result
+    # https://lukemiller.org/index.php/2010/02/calculating-lt50-median-lethal`  -temperature-aka-ld50-quickly-in-r/
+    par(mfrow = c(1,1), pty = 's')
+    
+    plot(data2$tempavg,data2$propsurv, ylab = "Proportional Survival", xlab = "Temperature (°C)", pch = 16, tick = FALSE)
+    
+    logisticline = function(z) {
+      eta = 1287.24 + -38.74 * z;
+      1 / (1 + exp(-eta))
+    }
+    
+    x = seq(18,40,0.01)
+    
+    lines(x,logisticline(x),new = TRUE)
+  
+    abline(h = 0.5, col = 'red')  
+##### Test for differences across tide heights, habitats + life stages #####
   
 # Data Prep: 
   
@@ -146,6 +188,19 @@ for (i in 1:length(ID.days))
 # CCSP model
   ccsp.lt<-aov(LT50~ tideht+uhab+month*lifestage, data = ccsp.tt2)
   
+  # add size to model to see if significant
+  ccsp.lt.size<-aov(LT50 ~ tideht + uhab + month*lifestage + avg.size, data = ccsp.tt2)
+  summary(ccsp.lt.size)
+    # NS effect, keep original model 
+  
+  
+  # take out month to see if results still same (reviewer request)
+  ccsp.lt.reduced<-aov(LT50 ~ tideht + uhab + lifestage, data = ccsp.tt2)
+  summary(ccsp.lt.reduced)
+  
+  lcdm.lt.reduced<-aov(LT50 ~ tideht + uhab + lifestage, data = lcdm.tt2)
+  summary(lcdm.lt.reduced)
+  
     # check assumptions (un-comment plots to see)
     par(mfrow = c(2,2), pty = 's')
     plot(ccsp.lt)
@@ -154,8 +209,12 @@ for (i in 1:length(ID.days))
     summary(ccsp.lt)
     TukeyHSD(ccsp.lt)
     
-# LCDM model
+  # LCDM Model 
     lcdm.lt<-aov(LT50 ~ tideht + uhab + month*lifestage, data = lcdm.tt2)
+    
+    # see if adding size as a term in the model changes results
+    lcdm.lt.size<-aov(LT50 ~ tideht + uhab + month*lifestage + avg.size, data = lcdm.tt2)
+    summary(lcdm.lt.size)
     
     # check assumptions (un-comment plots to see)
     par(mfrow = c(2,2), pty = 's')
@@ -165,6 +224,21 @@ for (i in 1:length(ID.days))
     summary(lcdm.lt)
     TukeyHSD(lcdm.lt)
 
+  # Check to see if linear realtionship b/w LT50 and size for each life stage & site
+    # if linear relationship, use as covariate in analyses
+  adu.size.lcdm <- subset(lcdm.tt2, lifestage == 'Adult')
+    summary(lm(adu.size.lcdm$LT50 ~ adu.size.lcdm$avg.size))
+    plot(adu.size.lcdm$avg.size, adu.size.lcdm$LT50)
+  juv.size.lcdm <- subset(lcdm.tt2, lifestage == 'Juvenile')
+    plot(juv.size.lcdm$avg.size, juv.size.lcdm$LT50)
+    summary(lm(juv.size.lcdm$LT50 ~ juv.size.lcdm$avg.size))
+  adu.size.ccsp <- subset(ccsp.tt2, lifestage == 'Adult')
+    plot(adu.size.ccsp$avg.size, adu.size.ccsp$LT50)
+    summary(lm(adu.size.ccsp$LT50 ~ adu.size.ccsp$avg.size))
+  juv.size.ccsp <- subset(ccsp.tt2, lifestage == 'Juvenile')
+    plot(juv.size.ccsp$avg.size, juv.size.ccsp$LT50)
+    summary(lm(juv.size.ccsp$LT50 ~ juv.size.ccsp$avg.size))
+  
 ##### Summarize LT50 across tide height, life stage & habitat #####
   
   # Summarize data by site,tide height, life stage & habitat 
@@ -194,15 +268,12 @@ for (i in 1:length(ID.days))
   
 ##### Temp. data import and formatting #####
   # Goal: generate risk diagram - P(temp > LT50)
-  
+  # Note: adjusted to be mid-point of seasons around LT50 date (instead of season before) on 4/15/19
 # Load in temp. data (from Station_Temp_Fill-in_Code_etc.) @ 2 sites
   
   # CCSP
     # lab computer
-    ccsp.temp <- read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_CCSP_7.24.18.csv")
-
-    # laptop
-    #ccsp.temp <- read_csv("C:/Users/Lauren Pandori/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_CCSP_7.24.18.csv")
+    ccsp.temp <- read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_CCSP_4.15.19.csv")
     # QC CCSP data
     head(ccsp.temp)
     # weird column added...remove so lines up with LCDM data
@@ -210,25 +281,20 @@ for (i in 1:length(ID.days))
   
   # LCDM 
     # lab computer
-   lcdm.temp <- read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_LCDM_7.24.18.csv")
+   lcdm.temp <- read_csv("C:/Users/McQuinn/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_LCDM_4.15.19.csv")
+   lcdm.temp$X1<-NULL
+   head(lcdm.temp)
 
-  # laptop
-   #lcdm.temp <- read_csv("C:/Users/Lauren Pandori/Box Sync/OCEANS_Stats/OCANS_Stats/OCEANS_TempData_LCDM_7.24.18.csv")
-  # QC LCDM data
-  head(lcdm.temp)
-  lcdm.temp$X1<-NULL
-  head(ccsp.temp)
-  head(lcdm.temp)
   
   # add site identifier column
   ccsp.temp$site<-'ccsp'
   lcdm.temp$site<-'lcdm'
+
+  colnames(ccsp.temp)
+  colnames(lcdm.temp)
   
-  # remove Date column from 'ccsp'
-  ccsp.temp$Date<-NULL
-  
-  # make column names consistent
-  colnames(lcdm.temp)<-colnames(ccsp.temp)
+  # make column names consistent?
+  colnames(lcdm.temp)==colnames(ccsp.temp)
 
   # merge datsets
   temp<-rbind(ccsp.temp, lcdm.temp)
@@ -243,7 +309,7 @@ for (i in 1:length(ID.days))
   
   # calculate daily max a few ways
   head(temp)
-  dailytemp<-ddply(temp, c('site', 'season', 'place', 'number_day'), summarize, 
+  dailytemp<-ddply(temp, c('site', 'season.mid', 'place', 'number_day'), summarize, 
             movavg.max = max(movingavg, na.rm = TRUE),
             movavg.mean = mean(movingavg, na.rm = TRUE),
             fill.max = max(fill, na.rm = TRUE),
@@ -251,7 +317,7 @@ for (i in 1:length(ID.days))
   
   # summarize across days (mean for each site/season/place)
   
-  avgtemp<-ddply(dailytemp, c('site', 'season', 'place'),
+  avgtemp<-ddply(dailytemp, c('site', 'season.mid', 'place'),
                  summarize,
                  avg.movmax = mean(movavg.max),
                  avg.movmean = mean(movavg.mean),
@@ -274,7 +340,7 @@ for (i in 1:length(ID.days))
     # Revalue to match up columns
     avgtemp$site<-revalue(avgtemp$site, c('ccsp' = 'CCSP', 'lcdm' = 'LCDM'))
     # make temps apply to one season behind it (LT50 for spring would be based on data from winter of prior year)
-    avgtemp$season <- revalue(avgtemp$season, c('Fall' = 'December', 'Winter' = 'March', 'Spring' = 'June', 'Summer' = 'September'))
+    avgtemp$season <- revalue(avgtemp$season, c('Fall' = 'September', 'Winter' = 'December', 'Spring' = 'March', 'Summer' = 'June'))
     # re-name uhabs x tideheights
     unique(avgtemp$place)
     unique(tt$tideht)
@@ -361,8 +427,8 @@ for (i in 1:length(ID.days))
   # get datasets (need LT50 calculated and temp fill)
   # create column that has a unique name for each site x place x tideht x uhab x season combo
     # rename season column to match LT50 data (month)
-    # These are offset so that temps from one season apply to the LT50 for       the end of the season 
-    temp$season<-revalue(temp$season,c('Spring' = 'June', 'Summer' = 'September', 'Winter' = 'March', 'Fall' = 'December'))
+    # These are offset so that LT50's are matched up with a half season on either side (midpoint split)
+
     temp$site<-revalue(temp$site, c('ccsp' = 'CCSP', 'lcdm' = 'LCDM'))
 
     temp$place<-revalue(temp$place, c('lsol' = 'Low Solitary', 'lagg' = 'Low Aggregate', 'lsh' = 'Low Shelter', 'ltp' = 'Low Tidepool', 'msol' = 'Mid Solitary', 'magg' = 'Mid Aggregate', 'msh' = 'Mid Shelter', 'mtp' = 'Mid Tidepool', 'hsol' = 'High Solitary', 'hagg' = 'High Aggregate', 'hsh' = 'High Shelter', 'htp' = 'High Tidepool'))
@@ -381,7 +447,7 @@ for (i in 1:length(ID.days))
     tt$name2<-paste(tt$site, tt$tideht, tt$uhab)
     
   # create // dataset with daily max 6-hr average temps
-    dailytemp$season<-revalue(dailytemp$season,c('Spring' = 'June', 'Summer' = 'September', 'Winter' = 'March', 'Fall' = 'December'))
+    dailytemp$season<-revalue(dailytemp$season.mid,c('Spring' = 'March', 'Summer' = 'June', 'Winter' = 'December', 'Fall' = 'September'))
     
     dailytemp$site<-revalue(dailytemp$site, c('ccsp' = 'CCSP', 'lcdm' = 'LCDM'))
     
@@ -431,7 +497,6 @@ for (i in 1:length(ID.days))
     for (i in 1:96)
     { # subset data
       lt<-subset(tt, tt$name == names1[i] & tt$lifestage == 'Adult')
-      mov<-subset(temp2, temp2$name == names1[i])
       daymax<-subset(dailytemp2, dailytemp2$name == names1[i])
       
       # create other route for values with no temp data
@@ -452,9 +517,10 @@ for (i in 1:length(ID.days))
       }
       else
       {
-      # create CDF's for each temp data type 
-      cdf.avg = ecdf(mov$movingavg) # all 6-hr mov avg's
+      # create CDF's
       cdf.max = ecdf(dailytemp2$movavg.max) # daily max 6-hr mov avg
+      names1.result$cdf.avg.mean[i]<-NA
+      names1.result$cdf.avg.se[i]<-NA # no error value for CDF
       
       # fill in summary data table
         names1.result$season[i]<-lt$month[1]
@@ -466,14 +532,14 @@ for (i in 1:length(ID.days))
         names1.result$lt.se[i]<-lt$SE[1]
 
       # calculate P (temp > LT50)
-        names1.result$cdf.avg.mean[i]<-1-(cdf.avg(lt$LT50)[1])
+        names1.result$cdf.avg.mean[i]<-NA
         names1.result$cdf.avg.se[i]<-NA # no error value for CDF
         names1.result$cdf.max.mean[i]<-1-(cdf.max(lt$LT50)[1])
         names1.result$cdf.max.se[i]<-NA # no error value CDF
     }}
     # re-name to specify that this is adult only
     names1.result.adult<-names1.result
-  
+    
   # re-run for juveniles
     for (i in 1:length(names1))
     { # subset data
@@ -500,7 +566,7 @@ for (i in 1:length(ID.days))
       else
       {
         # create CDF's for each temp data type 
-        cdf.avg = ecdf(mov$movingavg) # all 6-hr mov avg's
+        cdf.avg = 'NA' # all 6-hr mov avg's
         cdf.max = ecdf(dailytemp2$movavg.max) # daily max 6-hr mov avg
         
         # fill in summary data table
@@ -513,7 +579,7 @@ for (i in 1:length(ID.days))
         names1.result$lt.se[i]<-lt$SE[1]
         
         # calculate P (temp > LT50)
-        names1.result$cdf.avg.mean[i]<-1-(cdf.avg(lt$LT50)[1])
+        names1.result$cdf.avg.mean[i]<-NA
         names1.result$cdf.avg.se[i]<-NA # no error value for CDF
         names1.result$cdf.max.mean[i]<-1-(cdf.max(lt$LT50)[1])
         names1.result$cdf.max.se[i]<-NA # no error value CDF
@@ -524,7 +590,7 @@ for (i in 1:length(ID.days))
     names1.result<-rbind(names1.result.juvenile, names1.result.adult)
     
   # export as csv file plot in excel
-  write.csv(names1.result, 'cdf_season_results_1_23_19.csv')
+  write.csv(names1.result, 'cdf_season_results_4_15_19.csv')
 
 head(names1.result)
 
@@ -548,3 +614,78 @@ head(names1.result)
       # look at results
       cc.kw
       lc.kw
+
+##### Pairwise comparisons - life stage + season combinations @ each site #####
+
+
+##### Cheating (since on laptop), to do paired tests, load in names1result #####
+      
+      paired<-read.csv('cdf_season_results_4_15_19.csv')
+      head(paired)
+      
+      # get rid of extra columns
+      head(paired)
+      paired$tideht<-NULL
+      paired$uhab<-NULL
+      paired$lt.mean<-NULL
+      paired$lt.se<-NULL
+      paired$cdf.avg.mean<-NULL
+      paired$cdf.avg.se<-NULL
+      paired$cdf.max.se<-NULL
+      
+      head(paired)
+      
+    # subset ccsp site
+      ccsp.paired<-subset(paired, paired$site == 'CCSP')
+    
+    # subset juveniles and adults
+      cj<-subset(ccsp.paired, ccsp.paired$lifestage == 'Juvenile')
+      ca<-subset(ccsp.paired, ccsp.paired$lifestage == 'Adult')
+      
+    # KW test b/w all possibitilies of seasonal pairigs for juv + adult
+      # create output matrix 
+      jres<-matrix(NA, nrow = 4, ncol = 4)
+      jres<-as.data.frame(jres)
+      colnames(jres)<-c('Fall', 'Winter', 'Summer', 'Spring')
+      row.names(jres)<- c('Fall', 'Winter', 'Summer', 'Spring')
+      
+      jres
+      
+      # subest + coduct KW tests
+      unique(cj$season)
+      unique(ca$season)
+      
+      jfall<-subset(cj, cj$season == 'September')
+      jwinter<-subset(cj, cj$season == 'December')
+      jspring<-subset(cj, cj$season == 'March')
+      jsummer<-subset(cj, cj$season == 'June')
+      
+      afall<-subset(ca, ca$season == 'September')
+      awinter<-subset(ca, ca$season == 'December')
+      aspring<-subset(ca, ca$season == 'March')
+      asummer<-subset(ca, ca$season == 'June')
+      
+      
+      # fall-winter comparison
+      t.test(jfall$cdf.max.mean, jwinter$cdf.max.mean)
+      t.test(afall$cdf.max.mean, awinter$cdf.max.mean)
+      
+      # fall-spring comparison
+      t.test(jfall$cdf.max.mean, jspring$cdf.max.mean)
+      t.test(afall$cdf.max.mean, aspring$cdf.max.mean)
+    
+      # fall-summer comparison
+      t.test(jfall$cdf.max.mean, jsummer$cdf.max.mean)
+      t.test(afall$cdf.max.mean, asummer$cdf.max.mean)
+      
+      # winter-spring comparison
+      t.test(jwinter$cdf.max.mean, jspring$cdf.max.mean)
+      t.test(awinter$cdf.max.mean, aspring$cdf.max.mean)
+      
+      # winter-summer comparison
+      t.test(jwinter$cdf.max.mean, jsummer$cdf.max.mean)
+      t.test(awinter$cdf.max.mean, asummer$cdf.max.mean)
+      
+      # spring-summer comparison
+      t.test(jspring$cdf.max.mean, jsummer$cdf.max.mean)
+      t.test(aspring$cdf.max.mean, asummer$cdf.max.mean)
