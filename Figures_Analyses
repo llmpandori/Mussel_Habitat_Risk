@@ -1,0 +1,1197 @@
+################################################################
+#Title: LT50 and Risk Figures 
+#Purpose: Plot LT50s and calculate risk (# days exposure > LT50)
+#Created by: L Pandori
+#Created: 05/01/2020
+#Last edited:  06/07/2020
+################################################################
+##### Data prep and package upload #####
+#Clear workspace
+rm(lists=ls())
+
+# if working with LTdata beforehand, detach plyr and reshape
+detach("package:reshape", unload = TRUE)
+detach("package:plyr", unload = TRUE)
+
+#load libraries
+library(readr)    # read csv files
+library(RColorBrewer) # make color palettes
+library(tidyverse)    # ggplot
+library(cowplot)  # edit plots for pub
+library(patchwork)# arrange plot arrays for pub
+library(lubridate)
+library(dunn.test)
+library(formattable)
+library(rcompanion)
+library(ggpubr)
+
+##### Data load and tidy #####
+
+# LT50 Data 
+lt <- read_csv('TT2.csv')
+
+# Designate ordered factors and clean up names for plot
+
+lt <- lt %>%
+  # clean up habitat name (Tidepool --> Tide pool)
+  mutate(place = ifelse(uhab == 'Tidepool','Tide pool', uhab))
+
+  # designate ordered factors
+lt$place <- ordered(lt$place, 
+                levels = c('Solitary','Aggregate',
+                      'Shelter', 'Tide pool')) 
+lt$tideht <- ordered (lt$tideht, 
+                levels = c('High', 'Mid', 'Low'))
+lt$season <- recode(lt$month, 'Winter' = 'December', 'Spring' = 'March', 'Summer' = 'June', 'Fall' = 'September')
+lt$season <- ordered(lt$season, 
+                levels = c('Winter', 'Spring', 'Summer', 'Fall'))
+lt$month <- ordered(lt$month, 
+                levels = c('December', 'March', 'June', 'September'))
+  
+# Get summary data to plot (LT50 +/- SE)
+  lt_summary_place <- lt %>%
+    arrange(site, lifestage, tideht, place) %>%
+    group_by(site, lifestage, tideht, place) %>%
+    summarize(avg = mean(LT50, na.rm = TRUE),
+              sd = sd(LT50, na.rm = TRUE),
+              n = length(LT50),
+              se = sd/(n^0.5))
+  
+  lt_summary_time <- lt %>%
+    arrange(site, lifestage, month) %>%
+    group_by(site, lifestage, month) %>%
+    summarize(avg = mean(LT50, na.rm = TRUE),
+              sd = sd(LT50, na.rm = TRUE),
+              n = length(LT50),
+              se = sd/(n^0.5))
+  
+  
+  lt_summary_time <- lt_summary_time %>%
+    mutate(season = ifelse(month == 'December', 'Winter', ifelse(month == 'March', 'Spring', ifelse(month == 'June', 'Summer', ifelse(month == 'September', 'Fall', NA)))))
+  
+  lt_summary_time$season <- ordered(lt_summary_time$season, levels = c('Winter', 'Spring', 'Summer', 'Fall'))
+  
+##### Plot prep - set theme #####
+
+  # set theme
+  lltheme <- theme_set(
+    theme_bw() + 
+      theme(text = element_text(size = 12),
+            # no background to wrap panels
+            strip.background = element_blank(),
+            # panel labels outside x axis labels
+            strip.placement = 'outside',
+            # tilt and adjust position of x axis labels
+            axis.text.y = element_text(size = 12, color = 'black'),
+            axis.text.x = element_text(angle = 45, 
+                                       hjust = 1, size = 12, 
+                                       color = 'black'),
+            strip.text.x = element_text(size = 12, 
+                                        color = 'black'), 
+            # no legends
+            legend.position = 'none',
+            plot.caption = element_text(family = 'serif', size = 12, color = 'black', hjust = 0))
+  )
+
+##### Fig 2b - CCSP LT50 (habitat wrapped across tide ht) #####
+  
+  # filter ccsp juvenile and ccsp adult data
+  place_ccj <- lt_summary_place %>% filter(
+                      lifestage == 'Juvenile' & site == 'CCSP')
+
+  place_cca <- lt_summary_place %>% filter(
+                      lifestage == 'Adult' & site == 'CCSP')
+  
+  # Plot (habitat wrapped across tide hts)
+  fig2b <- ggplot() + 
+    #  error bars for juveniles
+    geom_errorbar(data = place_ccj,
+                mapping = aes(x = place, ymin = (avg-se), 
+                ymax = (avg+se)), width=.1,
+                position = position_nudge(-0.1)) + 
+    # error bars for adults
+    geom_errorbar(data = place_cca,
+                mapping = aes(x = place, ymin = (avg-se),
+                ymax = (avg+se)), width=.1, 
+                position = position_nudge(+0.1)) +
+    # juvenile points
+    geom_point(data = place_ccj,
+               mapping = aes(x = place, y = avg, fill = place), 
+               shape = 24, size = 2,
+               position = position_nudge(-0.1)) +
+    # adult points
+    geom_point(data = place_cca,
+               mapping = aes(x = place, y = avg, fill = place), 
+               shape = 21, size = 2.7, 
+               position = position_nudge(+0.1)) + 
+    # wrap by tide height
+    facet_wrap(~tideht, strip.position = 'bottom') +
+    # create legend in top L corner of High panel
+    geom_rect(data = filter(place_cca, tideht == 'High'), 
+              mapping = aes(xmin = 0.4, ymin = 36.5,
+                    xmax= 3, ymax = 39.4),
+              color = 'gray48', 
+              fill = adjustcolor('gray87', alpha = 0.1)) +
+    geom_text(data = filter(place_cca, tideht == 'High'),
+               mapping = aes(x = 1, y = 37, 
+                             label = 'Juvenile', hjust = 0)) +
+    geom_text(data = filter(place_cca, tideht == 'High'),
+              mapping = aes(x = 1, y = 38,
+                            label = 'Adult', hjust = 0)) +
+    geom_text(data = filter(place_cca, tideht == 'High'),
+              mapping = aes(x = 0.7, y = 38.9,
+                            label = 'Life stage', hjust = 0)) + 
+    geom_point(data = filter(place_cca, tideht == 'High'),
+              mapping = aes(x = 0.7, y = 37), 
+              shape = 24, size = 2) + 
+    geom_point(data = filter(place_cca, tideht == 'High'),
+              mapping = aes(x = 0.7, y = 38),
+              shape = 21, size = 2.7) + 
+    # axis labels
+    xlab('Tide height and habitat') + 
+    ylab (expression('LT'[50]*' (°C)')) +
+    # colors
+    scale_fill_manual(values = c('#D3D3D3', '#494949', '#B2D35B', 'steelblue4')) +
+    # y-limits
+    coord_cartesian(ylim = c(32,39), xlim = c(1,4)) +
+    theme( legend.position = 'none')
+  
+  fig2b
+  
+  # save as png
+  ggsave('Fig2b_CCSP_LT50_tidehthabitat.png', 
+         # max width = 6 and height = 7 (preferred width = 3 or 6")
+         width = 6, height = 3, units = 'in', dpi = 300)
+
+##### Fig 3b - CCSP LT50 across seasons #####
+  time_ccj <- lt_summary_time %>% filter(
+    lifestage == 'Juvenile' & site == 'CCSP')
+  
+  time_cca <- lt_summary_time %>% filter(
+    lifestage == 'Adult' & site == 'CCSP')
+  
+  # plot
+  fig3b <- ggplot() + 
+    #  error bars for juveniles
+    geom_errorbar(data = time_ccj,
+                  mapping = aes(x = month, ymin = (avg-se), 
+                                ymax = (avg+se)), width=.1,
+                  position = position_nudge(-0.1)) + 
+    # error bars for adults
+    geom_errorbar(data = time_cca,
+                  mapping = aes(x = month, ymin = (avg-se),
+                                ymax = (avg+se)), width=.1, 
+                  position = position_nudge(+0.1)) +
+    # juvenile points
+    geom_point(data = time_ccj,
+               mapping = aes(x = month, y = avg, fill = season),
+               shape = 24, size = 2,
+               position = position_nudge(-0.1)) +
+    # adult points
+    geom_point(data = time_cca,
+               mapping = aes(x = month, y = avg, fill = season),
+               shape = 21, size = 2.7, 
+               position = position_nudge(+0.1)) + 
+    # create legend in bottom L corner 
+    geom_rect(data =time_cca, 
+              mapping = aes(xmin = 0.4, ymin = 31.5,
+                            xmax= 1.9, ymax = 34),
+              color = 'gray48', 
+              fill = adjustcolor('gray87', alpha = 0.1)) +
+    # juvenile
+    geom_text(data = filter(place_cca, tideht == 'High'),
+              mapping = aes(x = 0.75, y = 33, 
+                            label = 'Juvenile', hjust = 0)) +
+    # adult
+    geom_text(data = filter(place_cca, tideht == 'High'),
+              mapping = aes(x = 0.75, y = 32.1,
+                            label = 'Adult', hjust = 0)) +
+    # life stage
+    geom_text(data = filter(place_cca, tideht == 'High'),
+              mapping = aes(x = 0.5, y = 33.7,
+                            label = 'Life stage', hjust = 0)) + 
+    # juvenile point
+    geom_point(data = filter(place_cca, tideht == 'High'),
+               mapping = aes(x = 0.6, y = 33), 
+               shape = 24, size = 2) + 
+    # adult point
+    geom_point(data = filter(place_cca, tideht == 'High'),
+               mapping = aes(x = 0.6, y = 32.1),
+               shape = 21, size = 2.7) + 
+    # axis labels
+    xlab('Month') + 
+    ylab (expression('LT'[50]*' (°C)')) +
+    # colors
+    scale_fill_manual(values = c('#A6CEE3', '#33A02C', '#FB9A99', '#FF7F00')) +
+    # y-limits
+    coord_cartesian(ylim = c(32,37), xlim = c(1,4)) + 
+    theme(legend.position = 'none')
+  
+  fig3b
+  
+  # save as png
+  ggsave('Fig3b_CCSP_LT50_season.png', 
+         # max width = 6 and height = 7 (preferred width = 3 or 6")
+         width = 3, height = 3, units = 'in', dpi = 300)
+
+##### Fig S11b - LCDM LT50 (habitat wrapped by tideht) #####
+  
+  # filter juv and adult data
+  place_lcj <- lt_summary_place %>% filter(
+    lifestage == 'Juvenile' & site == 'LCDM')
+  
+  place_lca <- lt_summary_place %>% filter(
+    lifestage == 'Adult' & site == 'LCDM')
+  
+  # Plot (habitat wrapped across tide hts)
+  figS11b <- ggplot() + 
+    #  error bars for juveniles
+    geom_errorbar(data = place_lcj,
+                  mapping = aes(x = place, ymin = (avg-se), 
+                                ymax = (avg+se)), width=.1,
+                  position = position_nudge(-0.1)) + 
+    # error bars for adults
+    geom_errorbar(data = place_lca,
+                  mapping = aes(x = place, ymin = (avg-se),
+                                ymax = (avg+se)), width=.1, 
+                  position = position_nudge(+0.1)) +
+    # juvenile points
+    geom_point(data = place_lcj,
+               mapping = aes(x = place, y = avg, fill = place), 
+               shape = 24, size = 2,
+               position = position_nudge(-0.1)) +
+    # adult points
+    geom_point(data = place_lca,
+               mapping = aes(x = place, y = avg, fill = place), 
+               shape = 21, size = 2.7, 
+               position = position_nudge(+0.1)) + 
+    # wrap by tide height
+    facet_wrap(~tideht, strip.position = 'bottom') +
+    # create legend in top L corner of High panel
+    geom_rect(data = filter(place_lca, tideht == 'Low'), 
+              mapping = aes(xmin = 0, ymin = 36.5,
+                            xmax= 2.3, ymax = 39.4),
+              color = 'gray48', 
+              fill = adjustcolor('gray87', alpha = 0.1)) +
+    geom_text(data = filter(place_lca, tideht == 'Low'),
+              mapping = aes(x = 0.75, y = 37, 
+                            label = 'Juvenile', hjust = 0)) +
+    geom_text(data = filter(place_lca, tideht == 'Low'),
+              mapping = aes(x = 0.75, y = 38,
+                            label = 'Adult', hjust = 0)) +
+    geom_text(data = filter(place_lca, tideht == 'Low'),
+              mapping = aes(x = 0.1, y = 38.9,
+                            label = 'Life stage', hjust = 0)) + 
+    geom_point(data = filter(place_lca, tideht == 'Low'),
+               mapping = aes(x = 0.3, y = 37), 
+               shape = 24, size = 2) + 
+    geom_point(data = filter(place_lca, tideht == 'Low'),
+               mapping = aes(x = 0.3, y = 38),
+               shape = 21, size = 2.7) + 
+    # axis labels
+    xlab('Tide height and habitat') + 
+    ylab (expression('LT'[50]*' (°C)')) +
+    # colors
+    scale_fill_manual(values = c('#D3D3D3', '#494949', '#B2D35B', 'steelblue4')) +
+    # y-limits
+    coord_cartesian(ylim = c(32,39))    
+  
+  figS11b
+  
+  # save as png
+  ggsave('FigS11b_LCDM_LT50_tidehthabitat.png', 
+         # max width = 6 and height = 7 (preferred width = 3 or 6")
+         width = 6, height = 3, units = 'in', dpi = 300)
+  
+##### Fig S12b - LCDM LT50 across seasons #####
+  time_lcj <- lt_summary_time %>% filter(
+    lifestage == 'Juvenile' & site == 'LCDM')
+  
+  time_lca <- lt_summary_time %>% filter(
+    lifestage == 'Adult' & site == 'LCDM')
+  
+  # plot
+  figS12b <- ggplot() + 
+    #  error bars for juveniles
+    geom_errorbar(data = time_lcj,
+                  mapping = aes(x = month, ymin = (avg-se), 
+                                ymax = (avg+se)), width=.1,
+                  position = position_nudge(-0.1)) + 
+    # error bars for adults
+    geom_errorbar(data = time_lca,
+                  mapping = aes(x = month, ymin = (avg-se),
+                                ymax = (avg+se)), width=.1, 
+                  position = position_nudge(+0.1)) +
+    # juvenile points
+    geom_point(data = time_lcj,
+               mapping = aes(x = month, y = avg, fill = season),
+               shape = 24, size = 2,
+               position = position_nudge(-0.1)) +
+    # adult points
+    geom_point(data = time_lca,
+               mapping = aes(x = month, y = avg, fill = season),
+               shape = 21, size = 2.7, 
+               position = position_nudge(+0.1)) + 
+    # create legend in bottom L corner 
+    geom_rect(data = time_lca, 
+              mapping = aes(xmin = 0.1, ymin = 35.5,
+                            xmax= 1.75, ymax = 37.5),
+              color = 'gray48', 
+              fill = adjustcolor('gray87', alpha = 0.1)) +
+    # juvenile
+    geom_text(data = time_lca,
+              mapping = aes(x = 0.4, y = 36.5, 
+                            label = 'Juvenile', hjust = 0)) +
+    # adult
+    geom_text(data = time_lca,
+              mapping = aes(x = 0.4, y = 36,
+                            label = 'Adult', hjust = 0)) +
+    # life stage
+    geom_text(data = time_lca,
+              mapping = aes(x = 0.2, y = 37,
+                            label = 'Life stage', hjust = 0)) + 
+    # juvenile point
+    geom_point(data = time_lca,
+               mapping = aes(x = 0.3, y = 36.5), 
+               shape = 24, size = 2) + 
+    # adult point
+    geom_point(data = time_lca,
+               mapping = aes(x = 0.3, y = 36),
+               shape = 21, size = 2.7) + 
+    # axis labels
+    xlab('Season') + 
+    ylab (expression('LT'[50]*' (°C)')) +
+    # colors
+    scale_fill_manual(values = c('#A6CEE3', '#33A02C', '#FB9A99', '#FF7F00')) +
+    # y-limits
+    coord_cartesian(ylim = c(32,37))    
+  
+  figS12b
+  
+  # save as png
+  ggsave('FigS12b_LCDM_LT50_season.png', 
+         # max width = 6 and height = 7 (preferred width = 3 or 6")
+         width = 3, height = 3, units = 'in', dpi = 300)
+  
+##### Calculate Risk (maxtemp > LT50) #####
+
+# Upload daily max temp
+  dailytemp <- read_csv('dailytemp.csv')
+  
+# Create month column to compare (prior to LT measurement) +/- 45 days from midpoint of sampling month
+
+  dailytemp <- dailytemp %>%
+  mutate(monthmid = ifelse(
+      date <= as_date('2016-12-15') + days(45) & 
+      date >= as_date('2016-12-15') - days(45), 'December',
+    ifelse(
+      date <= as_date('2017-03-15') + days(45) &
+      date >= as_date('2017-03-15') - days(45), 'March',
+    ifelse(
+      date <= as_date('2017-06-15') + days(45) &
+      date >= as_date('2017-06-15') - days(45), 'June',
+    ifelse(
+      date <= as_date('2017-09-15') + days(45) & 
+      date >= as_date('2017-09-15') - days(45), 'September', NA)))))
+  
+  
+
+  # make sure site, month, tide height & habitat columns are //
+  
+  dailytemp <- mutate(dailytemp, site = ifelse(site == 'ccsp', 'CCSP', 'LCDM'))
+  
+  lt <- mutate(lt, place = ifelse(uhab == 'Tidepool', 'Tide pool', uhab))
+  
+  # make lists of factors
+  sitelist <- unique(lt$site)
+  monthlist <- unique(lt$month)
+  tidehtlist <- unique(lt$tideht)
+  placelist <- unique(lt$place)
+  lifestagelist <- unique(lt$lifestage)
+  
+  # get start and ends for each season type
+  monthmid_summary <- dailytemp %>%
+    group_by(monthmid) %>%
+    summarize(start = min(date),
+              end = max(date))
+  
+# Calculate P(temp > LT50) for site*season*habitat*ls combos
+  # create output columns in lt data set
+  lt$probmid <- NA
+
+  
+  lt3 <- lt %>%
+    select(site, month, tideht, place, lifestage, LT50, SE, probmid)
+  
+  lt3 <- lt3[0,]
+  
+  # create for loop setup 
+  for (i in 1:length(sitelist))
+  {
+    for (j in 1:length(monthlist))
+    {
+      for(k in 1:length(tidehtlist))
+      {
+        for(l in 1:length(placelist))
+        {
+          for(m in 1:length(lifestagelist))
+          {
+  
+  # subset relevant lt data
+  lt2 <- lt %>%
+    filter(site == sitelist[i] & 
+            month == monthlist[j] &
+            tideht == tidehtlist[k] &
+            place == placelist[l] & 
+            lifestage == lifestagelist[m])
+  
+  # subset relevant temp data (for both month scenarios)
+  temp_mid <- dailytemp %>%
+    filter(site == sitelist[i] & 
+           monthmid == monthlist[j] &
+           tideht == tidehtlist[k] &
+           place == placelist[l])
+  
+  # use if else to put NAs in columns where LT or temp data don't exist 
+  if(unique(temp_mid$movavg.max == -Inf)|nrow(lt2) == 0)
+  {
+    lt3 <- lt3 %>% add_row(
+      site = sitelist[i],
+      month = monthlist[j],
+      tideht = tidehtlist[k],
+      place = placelist[l],
+      lifestage = lifestagelist[m],
+      LT50 = NA, 
+      SE = NA, 
+      probmid = NA)
+  } else {
+  
+  # Find obs P(temp > LT50)
+  lt_mid <- filter(temp_mid, movavg.max > lt2$LT50)
+  
+  # Calculate proportion obs where temp > LT50
+  lt_mid_p <- nrow(lt_mid)/nrow(temp_mid)
+        
+  # Put in results
+  lt3 <- lt3 %>% add_row(
+             site = sitelist[i],
+             month = monthlist[j],
+             tideht = tidehtlist[k],
+             place = placelist[l],
+             lifestage = lifestagelist[m],
+             LT50 = lt2$LT50, 
+             SE = lt2$SE, 
+             probmid = lt_mid_p,
+            )
+        }}}}}}
+
+##### Test risk across lifestage, place*tideht, month? #####
+
+# CCSP 
+  ccsp <- filter(lt3, site == 'CCSP')
+  # compare lifestage (NSD)
+  kruskal.test(ccsp$probmid ~ ccsp$lifestage)
+  
+  # compare season (NSD)
+  kruskal.test(ccsp$probmid ~ ccsp$month)
+  
+  # compare tideht & habitat (NSD)
+  ccsp$tidehtplace <- paste(ccsp$tideht, ccsp$place)
+  kruskal.test(ccsp$probmid ~ ccsp$tidehtplace)
+  
+# LCdM
+  lcdm <- filter(lt3, site == 'LCDM')
+  
+  # compare lifestage
+  kruskal.test(lcdm$probmid ~ lcdm$lifestage)
+  
+  # compare season
+  kruskal.test(lcdm$probmid ~ lcdm$month)
+  
+  # compare tideht*habitat
+  lcdm$tidehtplace <- paste(lcdm$tideht, lcdm$place)
+  kruskal.test(lcdm$probmid ~ lcdm$tidehtplace)
+  
+##### Figure S13a - Risk heatmap using geom_tile #####
+# Data prep & un-tidy (long --> wide for heatmap)
+  # order factors (tideht, place, month, lifestage)
+  # designate ordered factors
+  lt3$place <- ordered(lt3$place, 
+              levels = c('Solitary','Aggregate',
+                                 'Shelter', 'Tide pool')) 
+  lt3$tideht <- ordered (lt3$tideht, 
+                levels = c('High', 'Mid', 'Low'))
+  
+  lt3$month <- ordered(lt3$month, 
+            levels = c('December', 'March', 'June', 'September'))
+  
+  lt3$month2 <- recode(lt3$month, 'December' = 'Dec.', 'March' = 'Mar.', 'June' = 'June', 'September' = 'Sept.')
+  
+  lt3$month2 <- ordered(lt3$month2, 
+            levels = c('Dec.', 'Mar.', 'June', 'Sept.'))
+  
+  lt3$lifestage <- ordered(lt3$lifestage, 
+                  levels = c('Juvenile', 'Adult'))
+  
+  # tidy data to format for heatmap
+  cc_heatmap <- lt3 %>%
+    filter(site == 'CCSP') %>%
+    mutate(percmid = probmid*100) %>%
+    select(tideht, place, month2, lifestage, percmid)
+  
+# fun facts for pub
+cc_funfacts <- cc_heatmap %>%
+  filter(percmid >0) %>%
+  mutate(days = (percmid/100)*90)
+  
+  lc_heatmap <- lt3 %>%
+    filter(site == 'LCDM') %>%
+    mutate(percmid = probmid*100) %>%
+    select(tideht, place, month2, lifestage, percmid)
+  
+  # edit theme
+  # set theme
+  lltheme2 <- theme_set(
+    theme_bw() + 
+      theme(text = element_text(size = 12),
+            # no background to wrap panels
+            strip.background = element_blank(),
+            # panel labels outside x axis labels
+            strip.placement = 'outside',
+            # tilt and adjust position of x axis labels
+            axis.text.y = element_text(size = 12, color = 'black'),
+            axis.text.x = element_text(angle = 45, 
+                                       hjust = 1, size = 12, 
+                                       color = 'black'),
+            strip.text.x = element_text(size = 12, 
+                                        color = 'black'), 
+            strip.text.y = element_text(size = 12, 
+                                        color = 'black',angle = 45),
+            # no legends
+            plot.caption = element_text(family = 'serif', size = 12, color = 'black', hjust = 0)))
+  
+  # Figure 5
+  ggplot(data = cc_heatmap) + 
+    geom_tile(mapping = aes(x = place, y = lifestage, fill = percmid)) + 
+    facet_grid(month2 ~ tideht, switch = 'both') + 
+    ylab('Month and life stage') + 
+    xlab('Tide height and habitat') + 
+    scale_fill_gradient(low = 'white', high = 'firebrick',
+                        na.value = 'white',
+                        guide = guide_colorbar(
+                          frame.colour = "black",
+                          ticks = FALSE, 
+                        )) + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          ) +
+    labs(fill = 'Percent')
+    
+  ggsave('FigS13a_CCSP_Risk_Heatmap.png', 
+         # max width = 6 and height = 7 (preferred width = 3 or 6")
+         width = 6, height = 4, units = 'in', dpi = 300)
+
+##### Fig S13b - Risk Diagram @ LCDM #####
+  
+  ggplot(data = lc_heatmap) + 
+    geom_tile(mapping = aes(x = place, y = lifestage, fill = percmid)) + 
+    facet_grid(month2 ~ tideht, switch = 'both') + 
+    ylab('Month and life stage') + 
+    xlab('Tide height and habitat') + 
+    scale_fill_gradient(low = 'white', high = 'firebrick',
+                        na.value = 'white',
+                        guide = guide_colorbar(
+                          frame.colour = "black",
+                          ticks = FALSE, 
+                        )) + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+    ) +
+    labs(fill = 'Percent')
+  
+  ggsave('FigS13b_LCdM_Risk_Heatmap.png', 
+         # max width = 6 and height = 7 (preferred width = 3 or 6")
+         width = 6, height = 4, units = 'in', dpi = 300)
+##### Clean up environment #####
+  remove(i)
+  remove(j)
+  remove(k)
+  remove(l)
+  remove(lifestagelist)
+  remove(lt_mid_p)
+  remove(m)
+  remove(monthlist)
+  remove(placelist)
+  remove(sitelist)
+  remove(tidehtlist)
+  remove(lt2)
+  remove(lt3)
+  remove(lt_mid)
+  
+##### Re-analyze Temp Data with Midpoint Seasons #####
+  # get rid of -Inf rows
+  dailytemp <- dailytemp %>%
+    filter(movavg.max != -Inf)
+  
+  # order factors 
+  dailytemp$tideht <- factor(dailytemp$tideht, ordered = TRUE, levels = unique(dailytemp$tideht))
+  
+  
+  dailytemp$monthmid <- factor(dailytemp$monthmid, ordered = TRUE, levels = unique(dailytemp$monthmid))
+  
+  dailytemp$place <- factor(dailytemp$place, ordered = TRUE, x = levels = unique(dailytemp$place))
+  
+  dailytemp$place2 <- factor(dailytemp$place2, ordered = TRUE,
+                             levels = unique(dailytemp$place2))
+  
+  # subset sites
+  dailytemp$tidehtplace <- paste(dailytemp$tideht, dailytemp$place)
+  dailytemp_ccsp <- filter(dailytemp, site == 'CCSP')
+  dailytemp_lcdm <- filter(dailytemp, site == 'LCDM')
+  
+  
+  # KW test for differencces bw tide heights*places
+  kruskal.test(dailytemp_ccsp$movavg.max ~ dailytemp_ccsp$tidehtplace)
+  kruskal.test(dailytemp_lcdm$movavg.max ~ dailytemp_lcdm$tidehtplace)
+  
+  # make summary data table
+  cc_temp_place <-  dailytemp_ccsp %>%
+    group_by(tideht, place, place2) %>%
+    summarize(median = median(movavg.max),
+              max = max(movavg.max),
+              min = min(movavg.max, na.rm = TRUE))
+  
+  lc_temp_place <- dailytemp_lcdm %>% 
+    group_by(tideht, place, place2) %>%
+    summarize(median = median(movavg.max),
+              max = max(movavg.max),
+              min = min(movavg.max, na.rm = TRUE))
+    
+  # pairwise dunn posthoc test w/ bonferroni correction
+  ccsp_dunn_place <- dunn.test(
+    x = dailytemp_ccsp$movavg.max, # data
+    g = dailytemp_ccsp$place2, # group
+    method = 'bonferroni', # Bonferroni correction applied
+    kw = TRUE,
+    table = TRUE) # report results of KW test
+
+  ccsp_dunn_place <- as_tibble(ccsp_dunn_place)
+  
+  placeorder <- c('hsol', 'hagg', 'hsh', 'htp', 'msol', 'magg', 'msh', 'mtp', 'lsol', 'lagg', 'lsh', 'ltp')
+  
+  ccsp_dunn_place <- ccsp_dunn_place %>%
+    mutate(comparisons2 = comparisons) %>%
+    separate(comparisons2, c('first', 'second'), sep = ' - ') %>%
+    arrange(factor(second, levels = placeorder)) %>%
+    arrange(factor(first, levels = placeorder))
+  
+  # save results
+  write.csv(ccsp_dunn_place,"CCSP_DailyMax_DunnTest_Places_New.csv")  
+  
+  # how many pairs significantly different?
+  count(filter(ccsp_dunn_place, P.adjusted < 0.05))/count(ccsp_dunn_place)
+
+  lcdm_dunn_place <- dunn.test(
+    x = dailytemp_lcdm$movavg.max, # data
+    g = dailytemp_lcdm$place2, # group
+    method = 'bonferroni', # Bonferroni correction applied
+    kw = TRUE,
+    table = TRUE)
+  
+  lcdm_dunn_place <- as_tibble(lcdm_dunn_place)
+
+  lcdm_dunn_place <- ccsp_dunn_place %>%
+    mutate(comparisons2 = comparisons) %>%
+    separate(comparisons2, c('first', 'second'), sep = ' - ') %>%
+    arrange(factor(second, levels = placeorder)) %>%
+    arrange(factor(first, levels = placeorder))
+
+  write.csv(lcdm_dunn_place,'LCDM_DailyMax_DunnTest_Places_New.csv') 
+  
+  # get letters and put in summary tables 
+  ccsp_place_letters <- cldList(
+    comparison = ccsp_dunn_place$comparisons, 
+    p.value = ccsp_dunn_place$P.adjusted,
+    threshold  = 0.05)
+  
+  ccsp_place_letters$place2 <- ccsp_place_letters$Group
+  
+ dailytemp_place_summary_ccsp <- merge(ccsp_place_letters, cc_temp_place, by = 'place2')
+
+ 
+ # get letters and put in summary tables 
+ lcdm_place_letters <- cldList(
+   comparison = lcdm_dunn_place$comparisons, 
+   p.value = lcdm_dunn_place$P.adjusted,
+   threshold  = 0.05)
+ 
+ lcdm_place_letters$place2 <- lcdm_place_letters$Group
+ 
+ dailytemp_place_summary_lcdm <- merge(lcdm_place_letters, lc_temp_place, by = 'place2')
+ 
+# Seasons
+ 
+ # KW test for differencces bw tide heights*places
+ kruskal.test(dailytemp_ccsp$movavg.max ~ dailytemp_ccsp$monthmid)
+ kruskal.test(dailytemp_lcdm$movavg.max ~ dailytemp_lcdm$monthmid)
+ 
+ # make summary data table
+ cc_temp_time <-  dailytemp_ccsp %>%
+   group_by(monthmid) %>%
+   summarize(median = median(movavg.max),
+             max = max(movavg.max),
+             min = min(movavg.max, na.rm = TRUE))
+ 
+ lc_temp_time <- dailytemp_lcdm %>% 
+   group_by(monthmid) %>%
+   summarize(median = median(movavg.max),
+             max = max(movavg.max),
+             min = min(movavg.max, na.rm = TRUE))
+ 
+ # pairwise dunn posthoc test w/ bonferroni correction
+ ccsp_dunn_time <- dunn.test(
+   x = dailytemp_ccsp$movavg.max, # data
+   g = dailytemp_ccsp$monthmid, # group
+   method = 'bonferroni', # Bonferroni correction applied
+   kw = TRUE,
+   table = TRUE) # report results of KW test
+ 
+ ccsp_dunn_time <- as_tibble(ccsp_dunn_time)
+ 
+ monthorder <- c('December', 'March', 'June', 'September')
+ 
+ ccsp_dunn_time <- ccsp_dunn_time %>%
+   mutate(comparisons2 = comparisons) %>%
+   separate(comparisons2, c('first', 'second'), sep = ' - ') %>%
+   arrange(factor(second, levels = monthorder)) %>%
+   arrange(factor(first, levels = monthorder))
+ 
+ # save results
+ write.csv(ccsp_dunn_time,"CCSP_DailyMax_DunnTest_Month_New.csv")  
+ 
+ lcdm_dunn_time <- dunn.test(
+   x = dailytemp_lcdm$movavg.max, # data
+   g = dailytemp_lcdm$monthmid, # group
+   method = 'bonferroni', # Bonferroni correction applied
+   kw = TRUE,
+   table = TRUE)
+ 
+ lcdm_dunn_time <- as_tibble(lcdm_dunn_time)
+ 
+ lcdm_dunn_time <- lcdm_dunn_time %>%
+   mutate(comparisons2 = comparisons) %>%
+   separate(comparisons2, c('first', 'second'), sep = ' - ') %>%
+   arrange(factor(second, levels = monthorder)) %>%
+   arrange(factor(first, levels = monthorder))
+ 
+ write.csv(lcdm_dunn_time,'LCDM_DailyMax_DunnTest_Month_New.csv') 
+ # get letters and put in summary tables 
+ ccsp_time_letters <- cldList(
+   comparison = ccsp_dunn_time$comparisons, 
+   p.value = ccsp_dunn_time$P.adjusted,
+   threshold  = 0.05)
+ 
+ ccsp_time_letters$monthmid <- ccsp_time_letters$Group
+ 
+ dailytemp_time_summary_ccsp <- merge(ccsp_time_letters, cc_temp_time, by = 'monthmid')
+ 
+ # get letters and put in summary tables 
+ lcdm_time_letters <- cldList(
+   comparison = lcdm_dunn_time$comparisons, 
+   p.value = lcdm_dunn_time$P.adjusted,
+   threshold  = 0.05)
+ 
+ lcdm_time_letters$monthmid <- lcdm_time_letters$Group
+ 
+ dailytemp_time_summary_lcdm <- merge(lcdm_time_letters, lc_temp_time, by = 'monthmid')
+
+##### Plot data prep #####
+ 
+# 4 summary datasets for plotting
+ # dailytemp_place_summary_ccsp
+ # dailytemp_place_summary_lcdm
+ 
+ # dailytemp_time_summary_ccsp
+ # dailytemp_time_summary_lcdm
+
+# 2 raw datasets for violins
+  # dailytemp_ccsp
+  # dailytemp_lcdm
+ 
+# Order factors
+ dailytemp_ccsp$place <- factor(dailytemp_ccsp$place, ordered = TRUE, levels = unique(dailytemp_ccsp$place))
+ 
+ dailytemp_ccsp$tideht <- factor(dailytemp$ccsp$tideht, ordered = TRUE, levels = unique(dailytemp_ccsp$tideht))
+ 
+ dailytemp_ccsp$monthend <- factor(dailytemp_ccsp$monthend, ordered = TRUE, levels = unique(dailytemp_ccsp$monthend))
+ 
+ dailytemp_lcdm$place <- factor(dailytemp_lcdm$place, ordered = TRUE, levels = unique(dailytemp_lcdm$place))
+ 
+ dailytemp_lcdm$tideht <- factor(dailytemp_lcdm$tideht, ordered = TRUE, levels = unique(dailytemp_lcdm$tideht))
+ 
+ dailytemp_lcdm$monthend <- factor(dailytemp_lcdm$monthend, ordered = TRUE, levels = unique(dailytemp_lcdm$monthend))
+ 
+# get max and min LT50 for each site
+ ccsp_lt_min <- 32.7
+ ccsp_lt_max <- 36.4
+ lcdm_lt_min <- 32.8
+ lcdm_lt_max <- 36.1
+ 
+# find avg difference (and range) across tide heights & seasons @ CCSP
+temp_funfacts <- dailytemp_place_summary_ccsp %>%
+  group_by(tideht) %>%
+  summarize(mean = mean(median))
+ 
+##### Fig S5 c,d - Temp Data Time Series for Supplement #####
+ggplot (data = filter(dailytemp_ccsp, number_day < 42957),
+        mapping = aes(x = date, y = movavg.max, 
+                      color = tidehtplace)) + 
+  geom_line() +
+  scale_color_viridis_d() +
+  xlab('Month') +
+  ylab('Daily Maximum Temperature (°C)') +
+  ggtitle('(c) Crystal Cove State Park - De-Tided Data') +
+  theme(legend.text = element_text(size = 8),
+        legend.key.size = unit(0.35, 'cm')) +
+  labs(color = 'Tide height & habitat')
+
+  ggsave('FigS5c_CCSP_DeTided_TimeSeries_Line.png',
+         height = 4, width = 6)
+  
+  
+# LCDM
+  ggplot (data = filter(dailytemp_lcdm, number_day < 42957),
+          mapping = aes(x = date, y = movavg.max, 
+                        color = tidehtplace)) + 
+    geom_line() +
+    scale_color_viridis_d() +
+    xlab('Month') +
+    ylab('Daily Maximum Temperature (°C)') +
+    ggtitle('(d) Little Corona del Mar - De-Tided Data') +
+    theme(legend.text = element_text(size = 8),
+          legend.key.size = unit(0.35, 'cm')) +
+    labs(color = 'Tide height & habitat')
+  
+  ggsave('FigS5d_LCDM_DeTided_TimeSeries_Line.png',
+         height = 4, width = 6)
+  
+
+##### Fig 2a - CCSP Thermal Maxima over Spaital Factors #####
+ # Plot Version 2 (violin w annotations)
+ Fig2a <- ggplot() + 
+   # add background shading for LT max and min
+   geom_hline(yintercept = mean(place_cca$avg), 
+              linetype = 'dashed', color = 'firebrick1') +
+   geom_hline(yintercept = mean(place_ccj$avg), 
+              linetype = 'solid', color = 'firebrick1') +
+   # points
+   geom_violin(data = dailytemp_ccsp, 
+               mapping = aes(x = place, y = movavg.max, 
+                             fill = place), 
+               scale = "area") +
+   geom_crossbar(data = dailytemp_place_summary_ccsp,
+                 mapping = aes(x = place, y = median, 
+                               ymax = max, ymin = min)) +
+   geom_text(data = dailytemp_place_summary_ccsp, 
+             mapping = aes(x = place, y = 10, label = Letter),
+             vjust = +0.9) +
+   geom_text(data = 
+          filter(dailytemp_place_summary_ccsp, tideht == 'Low'),           mapping = aes(x = 3, 
+                        y = 37, 
+                        label = 'Adult sensitivity'), color = 'firebrick1', size = 3.5, hjust = 0.5) +
+   geom_text(data = 
+               filter(dailytemp_place_summary_ccsp, tideht == 'Low'),           mapping = aes(x = 3, 
+                                                                                              y = 33, 
+                                                                                              label = 'Juvenile sensitivity'), color = 'firebrick1', size = 3.5, hjust = 0.5) +
+   facet_wrap(~tideht, strip.position = 'bottom') +
+   scale_fill_manual(values = c('#D3D3D3', '#494949', '#B2D35B', 'steelblue4')) + 
+   xlab('Tide height and habitat') + 
+   ylab ('Temperature (°C)')  +
+   # y-limits
+   coord_cartesian(ylim = c(8,40), xlim = c(1,4)) + 
+   # no legend
+   theme( legend.position = 'none')
+ 
+ Fig2a  
+ 
+ # save plot
+ ggsave('Fig2a_CCSP_Temp_Violin.png', 
+        # max width = 6 and height = 7 (preferred width = 3 or 6")
+        width = 6, height = 3, units = 'in', dpi = 300)
+
+##### Fig S11b - LCDM Thermal Maxima over Spatial Factors #####
+ FigS11b <- ggplot() + 
+   # add background shading for LT max and min
+   geom_hline(yintercept = lcdm_lt_min, 
+              linetype = 'longdash', color = 'firebrick1') +
+   geom_hline(yintercept = lcdm_lt_max, 
+              linetype = 'longdash', color = 'firebrick1') +
+   # points
+   geom_violin(data = dailytemp_lcdm, 
+               mapping = aes(x = place, y = movavg.max, 
+                             fill = place), 
+               scale = "area") +
+   geom_crossbar(data = dailytemp_place_summary_lcdm,
+                 mapping = aes(x = place, y = median, 
+                               ymax = max, ymin = min)) +
+   geom_text(data = dailytemp_place_summary_lcdm, 
+             mapping = aes(x = place, y = 10, label = Letter),
+             vjust = +0.8) +
+   geom_text(data = 
+               filter(dailytemp_place_summary_lcdm, tideht == 'Low'),           mapping = aes(x = 4, 
+                                                                                              y = 34.4, 
+                                                                                              label = 'LT50 Range'), color = 'firebrick1', size = 3.5, hjust = 0.7) +
+   facet_wrap(~tideht, strip.position = 'bottom') +
+   scale_fill_manual(values = c('#D3D3D3', '#494949', '#B2D35B', 'steelblue4')) + 
+   xlab('Tide height and habitat') + 
+   ylab ('Temperature (°C)')  +
+   # y-limits
+   coord_cartesian(ylim = c(8,40)) + 
+   # no legend
+   theme( legend.position = 'none')
+ 
+ FigS11b
+ 
+ # save plot
+ ggsave('FigS11b_LCDM_Temp_Violin.png', 
+        # max width = 6 and height = 7 (preferred width = 3 or 6")
+        width = 6, height = 4, units = 'in', dpi = 300)
+
+##### Fig 2b 
+##### Fig 3a - CCSP Thermal Maxima over Temporal Factor #####
+  # remove NAs from dailytemp_ccsp
+ dailytemp_ccsp <- filter(dailytemp_ccsp, !is.na(monthmid))
+ 
+ # make more explanatory month column
+  monthmid_summary
+  dailytemp_ccsp <- merge(dailytemp_ccsp, monthmid_summary, by = 'monthmid')
+  
+  dailytemp_ccsp2 <- dailytemp_ccsp
+  
+  dailytemp_ccsp$monthlabel <- paste(dailytemp_ccsp2$monthmid,'\n (',month(dailytemp_ccsp2$start),'/',
+        day(dailytemp_ccsp2$start),' - ',
+        month(dailytemp_ccsp2$end),'/',
+        day(dailytemp_ccsp2$end),')', sep ='')
+  unique(dailytemp_ccsp$monthlabel)
+  dailytemp_ccsp$monthlabel <- factor(dailytemp_ccsp$monthlabel, ordered = TRUE, levels = c('December\n (10/31 - 1/29)', 'March\n (1/30 - 4/29)', 'June\n (5/1 - 7/30)', 'September\n (8/1 - 9/22)'))
+  
+
+ Fig3a <- ggplot() + 
+   # points
+   geom_violin(data = dailytemp_ccsp, 
+               mapping = aes(x = monthmid, y = movavg.max, 
+                             fill = monthmid), 
+               scale = "area") +
+   geom_crossbar(data = dailytemp_time_summary_ccsp,
+                 mapping = aes(x = monthmid, y = median, 
+                               ymax = max, ymin = min)) +
+   geom_text(data = dailytemp_time_summary_ccsp, 
+             mapping = aes(x = monthmid, y = 10, label = Letter),
+             vjust = 1) +
+   geom_hline(yintercept = mean(time_cca$avg), 
+              linetype = 'dashed', color = 'firebrick1') +
+   geom_hline(yintercept = mean(time_ccj$avg), 
+              linetype = 'solid', color = 'firebrick1') +
+   geom_text(data = dailytemp_time_summary_ccsp,
+             mapping = aes(x = 0.5, y = (mean(time_cca$avg) +3),label = 'Sensitivity (     Adult,      Juvenile)'),
+             color = 'firebrick1', size = 3.5, hjust = 0) +
+   
+   
+   geom_segment(mapping = aes(x = 1.7, y = 37.66291, xend = 2 , yend = 37.66291) ,color = 'firebrick1', linetype = 'dashed') +
+   geom_segment(mapping = aes(x = 2.7, y = 37.66291, xend = 2.9 , yend = 37.66291) ,color = 'firebrick1', linetype = 'solid') +
+   
+   
+   
+   scale_fill_manual(values = c('#A6CEE3', '#33A02C', '#FB9A99', '#FF7F00')) +  
+   xlab('Month') + 
+   ylab ('Temperature (°C)') +
+   # y-limits
+   coord_cartesian(ylim = c(8,39), xlim = c(1,4)) + 
+   theme(legend.position = 'none')
+ 
+ Fig3a
+ # save plot
+ ggsave('Fig3a_CCSP_Temp_Violin_Season.png', 
+        # max width = 6 and height = 7 (preferred width = 3 or 6")
+        width = 3, height = 3, units = 'in', dpi = 300)
+ 
+ # make slightly dif version for panel figure
+ Fig3a <- ggplot() + 
+   # points
+   geom_violin(data = dailytemp_ccsp, 
+               mapping = aes(x = monthmid, y = movavg.max, 
+                             fill = monthmid), 
+               scale = "area") +
+   geom_crossbar(data = dailytemp_time_summary_ccsp,
+                 mapping = aes(x = monthmid, y = median, 
+                               ymax = max, ymin = min)) +
+   geom_text(data = dailytemp_time_summary_ccsp, 
+             mapping = aes(x = monthmid, y = 10, label = Letter),
+             vjust = 1) +
+   geom_hline(yintercept = mean(time_cca$avg), 
+              linetype = 'dashed', color = 'firebrick1') +
+   geom_hline(yintercept = mean(time_ccj$avg), 
+              linetype = 'solid', color = 'firebrick1') +
+   geom_text(data = dailytemp_time_summary_ccsp,
+             mapping = aes(x = 0.5, y = (mean(time_cca$avg) +3),label = 'Sensitivity (     Adult,      Juvenile)'),
+             color = 'firebrick1', size = 3.5, hjust = 0) +
+   geom_segment(mapping = aes(x = 1.35, y = 37.66291, xend = 1.55 , yend = 37.66291), color = 'firebrick1', linetype = 'dashed') +
+   geom_segment(mapping = aes(x = 2.05, y = 37.66291, xend = 2.2 , yend = 37.66291), color = 'firebrick1', linetype = 'solid') +
+   scale_fill_manual(values = c('#A6CEE3', '#33A02C', '#FB9A99', '#FF7F00')) +  
+   xlab('Month') + 
+   ylab ('Temperature (°C)') +
+   # y-limits
+   coord_cartesian(ylim = c(8,39), xlim = c(1,4)) + 
+   theme(legend.position = 'none')
+ 
+ Fig3a
+ 
+ 
+##### Fig S12b - LCDM Thermal Maxima over Temporal Factor #####
+ 
+ # remove NAs from dailytemp_ccsp
+ dailytemp_lcdm <- filter(dailytemp_lcdm, !is.na(monthmid))
+ 
+ # make more explanatory month column
+ monthmid_summary
+ dailytemp_lcdm <- merge(dailytemp_lcdm, monthmid_summary, by = 'monthmid')
+ 
+ dailytemp_lcdm$monthlabel <- paste(dailytemp_lcdm$monthmid,'\n (',month(dailytemp_lcdm$start),'/',
+     day(dailytemp_lcdm$start),' - ',
+      month(dailytemp_lcdm$end),'/',
+        day(dailytemp_lcdm$end),')', sep ='')
+ 
+ unique(dailytemp_lcdm$monthlabel)
+ dailytemp_lcdm$monthlabel <- factor(dailytemp_lcdm$monthlabel, ordered = TRUE, levels = c('December\n (10/31 - 1/29)', 'March\n (1/30 - 4/29)', 'June\n (5/1 - 7/30)', 'September\n (8/1 - 9/22)'))
+ 
+ 
+ FigS12b <- ggplot() + 
+   # lt50 min and max lines
+   geom_hline(yintercept = lcdm_lt_min, 
+              linetype = 'longdash', color = 'firebrick1') +
+   geom_hline(yintercept = lcdm_lt_max, 
+              linetype = 'longdash', color = 'firebrick1') +
+   # points
+   geom_violin(data = dailytemp_lcdm, 
+               mapping = aes(x = monthmid, y = movavg.max, 
+                             fill = monthmid), 
+               scale = "area") +
+   geom_crossbar(data = dailytemp_time_summary_lcdm,
+                 mapping = aes(x = monthmid, y = median, 
+                               ymax = max, ymin = min)) +
+   geom_text(data = dailytemp_time_summary_lcdm, 
+             mapping = aes(x = monthmid, y = 10, label = Letter),
+             vjust = 1) +
+   geom_text(data = dailytemp_time_summary_lcdm,
+             mapping = aes(x = 0.5, y = 34.4,label = 'LT50 Range'),
+             color = 'firebrick1', size = 3.5, hjust = 0) +
+   scale_fill_manual(values = brewer.pal(n = 4, name = 'Paired')) + 
+   xlab('Tide height and habitat') + 
+   ylab ('Temperature (°C)') +
+   # y-limits
+   coord_cartesian(ylim = c(8,40)) + 
+   theme(legend.position = 'none') +
+   scale_x_discrete(labels = unique(dailytemp_lcdm$monthlabel))
+ 
+ FigS12b
+ # save plot
+ ggsave('FigS12b_LCDM_Temp_Violin_Season.png', 
+        # max width = 6 and height = 7 (preferred width = 3 or 6")
+        width = 3, height = 3, units = 'in', dpi = 300)
+ 
+##### Arrange figs and save pub versions #####
+##### Fig 2 - Temp  & LT50 across tide hts & habitats #####
+ # add subtitles & delete x axis of upper plot
+ plot.new()
+ Fig2a2 <- Fig2a + 
+   theme( strip.text.x = element_blank(),
+          axis.title.x = element_blank(),
+          axis.text.x = element_blank()) +
+   labs(subtitle = '(a) Thermal exposure across spatial factors')
+ 
+ 
+ Fig2b2 <- fig2b + 
+   theme(legend.position = 'none') +
+   labs(subtitle = '(b) Thermal sensitivity across spatial factors')
+
+
+Fig2 <- plot_grid(Fig2a2, Fig2b2, ncol = 1, rel_heights = c(0.65, 1), rel_widths = c(1,1))
+
+  
+ggsave('Fig2_CCSP_Temp_LT50.png', 
+       # max width = 6 and height = 7 (preferred width = 3 or 6")
+       width = 6, height = 5, units = 'in', dpi = 300)
+
+##### Fig 3 - Temp & LT50 across spatial factor (month) #####
+# add subtitles & delete x axis of upper plot
+
+Fig3a2 <- Fig3a + 
+  theme( strip.text.x = element_blank(),
+         axis.title.x = element_blank(),
+         axis.text.x = element_blank(),
+         legend.position = 'none') +
+  labs(subtitle = '(a) Thermal exposure across seasons') + coord_cartesian(xlim = c(1,4), ylim = c(8,40))
+
+
+Fig3b2 <- fig3b + 
+  theme(legend.position = 'none') +
+  labs(subtitle = '(b) Thermal sensitivity across seasons') + 
+  coord_cartesian(xlim = c(1,4), ylim = c(32,38))
+
+
+Fig3 <- plot_grid(Fig3a2, Fig3b2, ncol = 1, rel_heights = c(0.8, 1))
+
+
+ggsave('Fig3_CCSP_Temp_LT50.png', 
+       # max width = 6 and height = 7 (preferred width = 3 or 6")
+       width = 4, height = 6, units = 'in', dpi = 300)
+
+##### Fig4 - Stacked Bar Habitat Use (CCSP only) #####
+
+# Data upload & tidy 
+stacked <- read_csv("Occurence_Fig_Data_05252020.csv")
+
+# order factors
+stacked$tideht <- ordered (stacked$tideht,
+                           levels = c('High', 'Mid', 'Low'))
+stacked$Habitat <- ordered(stacked$Habitat,
+                           levels = unique(stacked$Habitat))
+stacked$place <- ordered(stacked$place, 
+                         levels = c('Juvenile', 
+                                    'Adult', 'Space'))
+
+# calculate count/m2 from original data (count/0.0625m2)
+stacked$Count2 = (stacked$Count*16)
+
+# Make stacked bar plot w 2 axes
+ggplot(data = stacked) + 
+  # bars for abundance
+  geom_col(mapping = aes(x = place,y = Count2, fill = Habitat),
+           color = 'black')+
+  # bars for proportion of space
+  geom_col(mapping = aes(x = place,y = (Proportion*300), fill = Habitat), color = 'black') +
+  geom_vline(xintercept = 2.5, linetype = 'longdash') +
+  # wrap by tide height
+  facet_wrap(~tideht, strip.position = 'bottom') +
+  # create secondary axis for proportion of space, label primary
+  scale_y_continuous(name = 'Abundance (count/m²)', 
+                     sec.axis = sec_axis(trans = ~./300,
+                     name = 'Proportion of space')) +
+  # fill // to other plots
+  scale_fill_manual(values = c('#D3D3D3', '#494949', '#B2D35B', 'steelblue4')) + 
+  xlab('Tide height and category')
+
+ggsave('Fig4_HabitatAbundanceSpace.png', 
+       # max width = 6 and height = 7 (preferred width = 3 or 6")
+       width = 6, height = 4, units = 'in', dpi = 300)
+
+# cursory analysis to see if behavior/habitat influences occurrence analylses
+occurrence <- read_csv("Occurrence_data_06072020.csv")
+
+occurrence <- occurrence %>%
+  select(site, tideht, stage = place, habitat, avg) %>%
+  mutate(choice = ifelse(habitat %in% c('Tide pool', 'Shelter'), 'habitat', 'behavior' ))
+
+m1 <- aov(avg ~ stage + habitat + tideht, data = occurrence)
+
+m2 <- aov(avg ~ stage + choice + tideht, data = occurrence)
